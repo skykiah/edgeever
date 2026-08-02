@@ -1,6 +1,6 @@
 {
   "name": "edgeever",
-  "version": "1.8.7",
+  "version": "1.8.12",
   "private": true,
   "type": "module",
   "workspaces": [

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { MemoDetail } from "@edgeever/shared";
-import { ActivityIndicator, Image as RNImage, Platform, ScrollView, StyleSheet, Text as RNText, useWindowDimensions, View, type ImageStyle, type StyleProp, type ViewStyle } from "react-native";
+import { resolveMemoContentMarkdown, type MemoDetail } from "@edgeever/shared";
+import { ActivityIndicator, Image as RNImage, Platform, ScrollView, StyleSheet, Text as RNText, useWindowDimensions, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { Modal } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Markdown, { type ASTNode, type RenderRules } from "react-native-markdown-display";
@@ -265,7 +265,25 @@ export const MemoDetailModal = ({
       );
     };
 
+    const renderSelectableTextBlock = (
+      node: ASTNode,
+      children: ReactNode[],
+      markdownStyles: Record<string, StyleProp<ViewStyle>>,
+    ) => (
+      <RNText key={node.key} selectable style={markdownStyles[node.type] as StyleProp<TextStyle>}>
+        {children}
+      </RNText>
+    );
+
+    // Select complete block-level text nodes instead of every inline text group.
+    // Android then keeps dividers and other View-based blocks in the native layout
+    // while still exposing the system copy menu for normal note text.
     return {
+      code_block: (node, _children, _parents, markdownStyles, inheritedStyles = {}) => (
+        <RNText key={node.key} selectable style={[inheritedStyles, markdownStyles.code_block]}>
+          {node.content.endsWith("\n") ? node.content.slice(0, -1) : node.content}
+        </RNText>
+      ),
       fence: (node, _children, _parents, markdownStyles, inheritedStyles = {}) => {
         const language = getMobileMarkdownFenceLanguage((node as ASTNode & { sourceInfo?: string }).sourceInfo);
         const content = trimMobileMarkdownFenceContent(node.content);
@@ -279,7 +297,7 @@ export const MemoDetailModal = ({
             />
           );
         }
-        return <RNText key={node.key} style={[inheritedStyles, markdownStyles.fence]}>{content}</RNText>;
+        return <RNText key={node.key} selectable style={[inheritedStyles, markdownStyles.fence]}>{content}</RNText>;
       },
       image: (node, _children, _parents, markdownStyles) => (
         <AuthenticatedResourceImage
@@ -291,6 +309,13 @@ export const MemoDetailModal = ({
           style={markdownStyles._VIEW_SAFE_image}
         />
       ),
+      heading1: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
+      heading2: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
+      heading3: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
+      heading4: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
+      heading5: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
+      heading6: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
+      paragraph: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
       table: (node, children, parents, markdownStyles) => {
         const columnCount = getTableColumnCount(node, parents);
         const tableWidth = columnCount > DETAIL_TABLE_FIT_COLUMN_COUNT
@@ -314,7 +339,9 @@ export const MemoDetailModal = ({
       th: (node, children, parents, markdownStyles) => renderTableCell(node, children, parents, markdownStyles, true),
     };
   }, [resolvedLocale, resolvedTheme, session, viewportWidth]);
-  const detailText = memo?.contentMarkdown || memo?.contentText || "没有正文内容";
+  const detailText = memo
+    ? resolveMemoContentMarkdown(memo.contentJson, memo.contentMarkdown) || memo.contentText || "没有正文内容"
+    : "没有正文内容";
   const searchMatches = useMemo(() => getTextSearchMatches(detailText, searchQuery), [detailText, searchQuery]);
   const searchMatchLabel = searchQuery.trim() ? `${searchMatches.length > 0 ? activeMatchIndex + 1 : 0}/${searchMatches.length}` : "0/0";
   const syncStatusLabel = isSaving || syncStatus === "syncing"
@@ -394,16 +421,17 @@ export const MemoDetailModal = ({
           </View>
         ) : memo ? (
           <ScrollView contentContainerStyle={styles.detailContent}>
-            <Text style={styles.detailTitle}>{memo.title?.trim() || DEFAULT_MEMO_TITLE}</Text>
+            <Text selectable style={styles.detailTitle}>{memo.title?.trim() || DEFAULT_MEMO_TITLE}</Text>
             <View style={styles.detailMetaRow}>
               <View style={styles.detailNotebookButton}>
-                <Text numberOfLines={1} style={styles.detailNotebookName}>{notebookName}</Text>
+                <Text numberOfLines={1} selectable style={styles.detailNotebookName}>{notebookName}</Text>
                 <ChevronDown color="#94a3b8" size={14} />
               </View>
               <View style={styles.detailTagsGroup}>
                 <Tag color="#64748b" size={16} />
                 <Text
                   numberOfLines={1}
+                  selectable
                   style={[styles.detailTagsInline, memo.tags.length === 0 && styles.detailTagsPlaceholder]}
                 >
                   {memo.tags.length ? memo.tags.join(", ") : "添加标签，用逗号分隔"}
@@ -501,7 +529,7 @@ const HighlightedDetailText = ({
   text: string;
 }) => {
   if (matches.length === 0) {
-    return <Text style={styles.detailMarkdown}>{text}</Text>;
+    return <Text selectable style={styles.detailMarkdown}>{text}</Text>;
   }
 
   const segments: ReactNode[] = [];
@@ -524,7 +552,7 @@ const HighlightedDetailText = ({
     segments.push(text.slice(cursor));
   }
 
-  return <Text style={styles.detailMarkdown}>{segments}</Text>;
+  return <Text selectable style={styles.detailMarkdown}>{segments}</Text>;
 };
 
 
@@ -583,6 +611,11 @@ const detailMarkdownStyles = StyleSheet.create({
     lineHeight: 26,
     marginBottom: 6,
     marginTop: 14,
+  },
+  hr: {
+    backgroundColor: "#66ca80",
+    height: 1,
+    marginVertical: 24,
   },
   link: {
     color: "#059669",

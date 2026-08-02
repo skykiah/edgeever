@@ -10,6 +10,7 @@ import {
   LoginSchema,
   LoginDeviceSessionUpdateSchema,
   markdownToDoc,
+  resolveMemoContentMarkdown,
   resolveMergedMemoTitle,
   isSuspiciousMemoOverwrite,
   isMemoEditBindingValid,
@@ -4936,7 +4937,14 @@ const mergeMemosRecord = async (
     .filter((row): row is MemoDetailRow => Boolean(row));
   const notebookId = input.notebookId ?? ordered[0].notebook_id;
   const title = resolveMergedMemoTitle(input.title, ordered);
-  const mergedMarkdown = ordered.map((memo) => memo.content_markdown).join("\n\n---\n\n");
+  const sourceMarkdown = ordered.map((memo) => {
+    const markdown = resolveMemoContentMarkdown(parseDoc(memo.content_json), memo.content_markdown);
+    if (!markdown.trim() && memo.content_text.trim()) {
+      throw new AppError("merge_content_unavailable", "One or more memo bodies could not be recovered safely.", 409);
+    }
+    return markdown;
+  });
+  const mergedMarkdown = sourceMarkdown.join("\n\n---\n\n");
   const contentJson = markdownToDoc(mergedMarkdown);
   const contentText = docToText(contentJson);
   const tags = Array.from(new Set(ordered.flatMap((memo) => parseJsonArray(memo.tags_json))));

@@ -1,4 +1,4 @@
-import { createExcerpt, docToText, markdownToDoc, resolveMergedMemoTitle, type MemoDetail, type MemoRevision, type MemoSummary, type MemoTemplate, type Notebook, type ResourceListItem, type TagSummary, type TiptapDoc } from "@edgeever/shared";
+import { createExcerpt, docToMarkdown, docToText, markdownToDoc, resolveMemoContentMarkdown, resolveMergedMemoTitle, type MemoDetail, type MemoRevision, type MemoSummary, type MemoTemplate, type Notebook, type ResourceListItem, type TagSummary, type TiptapDoc } from "@edgeever/shared";
 import type { MemoFilterMode, MemoSortMode } from "@/lib/app-helpers";
 import { api, type SyncChangesResponse } from "@/lib/api";
 import { localDb, type LocalMemo, type LocalNotebook, type LocalResource, type LocalRevision } from "@/lib/local-db";
@@ -301,7 +301,7 @@ export const putLocalMemoUpdate = async (
     excerpt: createExcerpt(contentText),
     tags: input.tags,
     contentJson: input.contentJson,
-    contentMarkdown: input.contentMarkdown ?? memo.contentMarkdown,
+    contentMarkdown: input.contentMarkdown ?? docToMarkdown(input.contentJson),
     contentText,
     updatedAt: new Date().toISOString(),
   };
@@ -560,7 +560,14 @@ export const applyLocalEmptyTrash = async (scope: string) => {
 export const mergeLocalMemos = async (scope: string, input: { memoIds: string[]; notebookId?: string; title?: string }) => {
   const sources = (await Promise.all(input.memoIds.map((memoId) => getLocalMemo(scope, memoId)))).filter((memo): memo is MemoDetail => Boolean(memo));
   if (sources.length < 2) return null;
-  const contentMarkdown = sources.map((memo) => memo.contentMarkdown).filter(Boolean).join("\n\n---\n\n");
+  const sourceMarkdown = sources.map((memo) => {
+    const markdown = resolveMemoContentMarkdown(memo.contentJson, memo.contentMarkdown);
+    if (!markdown.trim() && memo.contentText.trim()) {
+      throw new Error("Source note content could not be recovered safely. Merge was cancelled.");
+    }
+    return markdown;
+  });
+  const contentMarkdown = sourceMarkdown.join("\n\n---\n\n");
   const memo = await createLocalMemo(scope, {
     notebookId: input.notebookId ?? sources[0]!.notebookId,
     title: resolveMergedMemoTitle(input.title, sources),

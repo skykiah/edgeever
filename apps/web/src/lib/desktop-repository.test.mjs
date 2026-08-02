@@ -4,10 +4,14 @@ let lastRequest = null;
 
 globalThis.window = {
   location: { hostname: "notes.example.com", origin: "https://notes.example.com" },
+  dispatchEvent: () => true,
   edgeeverDesktop: {
     isAvailable: true,
     sidecarRequest: async (method, params) => {
       lastRequest = { method, params };
+      if (method === "memo.update") {
+        return { memo: { ...params, id: params.memoId, contentHash: "next-hash" } };
+      }
       return { memos: [], totalCount: 0, nextCursor: null };
     },
   },
@@ -29,5 +33,21 @@ describe("desktop repository notebook filters", () => {
         notebookIds: ["parent", "child"],
       },
     });
+  });
+});
+
+describe("desktop repository memo saves", () => {
+  test("serializes rich content to Markdown before sending it to the sidecar", async () => {
+    await createDesktopRepository().updateMemo(
+      { id: "memo-1", revision: 2, contentHash: "base-hash" },
+      {
+        title: "Rich note",
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "富文本正文" }] }] },
+        tags: [],
+      },
+    );
+
+    expect(lastRequest.method).toBe("memo.update");
+    expect(lastRequest.params.contentMarkdown).toContain("富文本正文");
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { countMemoCharacters, docToMarkdown, docToText, markdownToDoc, resolveMemoContentDoc, resolveMergedMemoTitle } from "./content.ts";
+import { countMemoCharacters, docToMarkdown, docToText, markdownToDoc, resolveMemoContentDoc, resolveMemoContentMarkdown, resolveMergedMemoTitle } from "./content.ts";
 
 describe("merged memo title", () => {
   test("prefers an explicit title, then the first custom source title", () => {
@@ -79,6 +79,12 @@ describe("legacy Markdown body recovery", () => {
     const resolved = resolveMemoContentDoc(markdownToDoc(""), markdown);
 
     expect(docToText(resolved)).toContain(markdown);
+  });
+
+  test("recovers Markdown from rich content when the compatibility copy is empty", () => {
+    const richContent = markdownToDoc("这段正文只保存在富文本 JSON 中。");
+
+    expect(resolveMemoContentMarkdown(richContent, "")).toContain("这段正文只保存在富文本 JSON 中。");
   });
 });
 

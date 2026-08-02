@@ -239,6 +239,17 @@ export const docToMarkdown = (doc: unknown): string => {
 };
 
 /**
+ * Returns the best complete Markdown representation available for a memo.
+ * Some older rich-editor saves populated contentJson while leaving the
+ * Markdown compatibility copy empty, so merge/export callers must not trust
+ * contentMarkdown alone.
+ */
+export const resolveMemoContentMarkdown = (
+  contentJson: TiptapDoc | null | undefined,
+  contentMarkdown: string | null | undefined,
+) => docToMarkdown(resolveMemoContentDoc(contentJson, contentMarkdown));
+
+/**
  * Theme blocks are richer editor-only nodes. Markdown has no portable equivalent,
  * so exports keep their text as a quoted section instead of silently dropping it.
  */
