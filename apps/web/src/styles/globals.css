@@ -42,6 +42,8 @@
     --editor-body-font-size: 0.9375rem;
     --editor-body-line-height: 1.6;
     --editor-paragraph-spacing: 0.45rem;
+    --memo-content-divider-color: rgb(var(--brand-green-300-rgb));
+    --memo-content-divider-spacing: 1.5rem;
     --editor-outline-width: 300px;
     --editor-content-max-width: 880px;
 
@@ -211,6 +213,35 @@ textarea {
   min-height: 100%;
   outline: none;
   padding: 8px 12px 56px;
+}
+
+.edgeever-public-share .ProseMirror {
+  min-height: 0;
+  padding: 8px 20px 40px;
+  color: #0f172a;
+}
+
+.edgeever-public-share .ProseMirror [data-edgeever-theme-block] {
+  margin: 1.25rem 0;
+  border: 1px solid #dbeee5;
+  border-radius: 6px;
+  background: #fbfefc;
+  padding: 0.8rem 1rem;
+}
+
+.edgeever-public-share .ProseMirror [data-theme-block-kind="chapter"] {
+  border-left: 4px solid var(--brand-green);
+  background: var(--brand-green-soft);
+}
+
+:root.dark .edgeever-public-share .ProseMirror {
+  color: #0f172a;
+}
+
+@media (min-width: 640px) {
+  .edgeever-public-share .ProseMirror {
+    padding-inline: 36px;
+  }
 }
 
 .ProseMirror .edgeever-search-match {
@@ -565,9 +596,9 @@ textarea {
 }
 
 .ProseMirror hr {
-  margin: 1.5rem 0;
+  margin: var(--memo-content-divider-spacing) 0;
   border: 0;
-  border-top: 1px solid rgb(var(--brand-green-300-rgb));
+  border-top: 1px solid var(--memo-content-divider-color);
 }
 
 .ProseMirror img {

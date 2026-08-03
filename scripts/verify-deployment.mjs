@@ -9,6 +9,7 @@ export const REQUIRED_TABLES = [
   "workspace_members",
   "notebooks",
   "memos",
+  "memo_shares",
   "memo_import_sources",
   "mobile_sync_changes",
 ];

@@ -3,9 +3,10 @@ import { useTranslation } from "react-i18next";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
+import { mergeAttributes } from "@tiptap/core";
 import Placeholder from "@tiptap/extension-placeholder";
 import { TableKit } from "@tiptap/extension-table";
-import { createExcerpt, docToMarkdown, docToText, emptyDoc, type MemoDetail, type MemoEditSession, type Notebook, type TiptapDoc } from "@edgeever/shared";
+import { createExcerpt, docToMarkdown, docToText, emptyDoc, getImageReferrerPolicy, type MemoDetail, type MemoEditSession, type Notebook, type TiptapDoc } from "@edgeever/shared";
 import { getMobileEditorInputAttributes, getMobileEditorPlaceholder } from "@edgeever/shared/mobile-editor";
 import {
   MobileEditorFallback,
@@ -40,6 +41,20 @@ import {
 import { getMemoUpdateQueueId, isMemoUpdateAlreadyApplied, queueMemoUpdate, shouldQueueMemoSaveError } from "@/lib/sync-queue";
 import { EdgeEverCodeBlock, codeBlockLowlight } from "@/lib/code-block";
 import { ThemeBlock } from "./ThemeBlock";
+
+const ProtectedExternalImage = Image.extend({
+  renderHTML({ HTMLAttributes }) {
+    const referrerPolicy = getImageReferrerPolicy(HTMLAttributes.src);
+    return [
+      "img",
+      mergeAttributes(
+        this.options.HTMLAttributes,
+        HTMLAttributes,
+        referrerPolicy ? { referrerpolicy: referrerPolicy } : {},
+      ),
+    ];
+  },
+});
 
 type ListNotebooksResponse = {
   notebooks: Notebook[];
@@ -173,7 +188,7 @@ export const MobileStandaloneTiptapEditor = ({
       StarterKit.configure({ codeBlock: false }),
       EdgeEverCodeBlock.configure({ lowlight: codeBlockLowlight, defaultLanguage: "plaintext" }),
       ThemeBlock,
-      Image.configure({
+      ProtectedExternalImage.configure({
         allowBase64: false,
         inline: false,
       }),

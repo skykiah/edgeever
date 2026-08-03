@@ -43,12 +43,13 @@ The public demo resets every Monday at 1:00 AM (China Standard Time) and restore
 - **Seamless Dual-View Editor**: Switch effortlessly between intuitive rich text editing and Markdown source code on desktop.
 - **Native Mermaid Diagram Rendering**: Render clear flowcharts, sequence diagrams, and mind maps directly in notes, preserving clean, editable source code across Markdown and rich text views.
 - **Revision History**: Inspect and restore previous iterations of your notes with built-in version tracking.
+- **Revocable Read-Only Sharing**: Create an unguessable public link for any note so others can view its latest saved content and attachments without signing in, then revoke access at any time.
 - **Smart Local Image Compression**: Client-side WebP compression reduces file sizes by 50%-90% before uploading, saving storage and speeding up page loads without extra server costs.
 - **Universal File Attachments**: Attach and preview PDFs, Office documents, zip files, audio, and video directly within notes.
 - **Batch Operations & Flexible Sorting**: Easily merge or relocate multiple notes, with drag-and-drop notebook reordering.
 - **Offline Drafts & Queueing**: Draft and edit uninterrupted while offline; changes automatically sync once reconnected.
 - **Multi-Tenant Account Isolation**: Host multiple user accounts on a single instance with strictly partitioned spaces and clean admin account management.
-- **Everywhere You Need It**: Chrome/Edge Web Clipper published on Chrome Web Store, with a Firefox-compatible build available from source; installable as a PWA; native Android app available on [Google Play](https://play.google.com/store/apps/details?id=org.edgeever.mobile), with APKs also downloadable from GitHub Releases; iOS app currently under App Store review; native desktop apps available for Apple Silicon and Intel Macs.
+- **Everywhere You Need It**: The Web Clipper is available from the Chrome Web Store for Chrome/Edge and from Firefox Add-ons for Firefox; installable as a PWA; native Android app available on [Google Play](https://play.google.com/store/apps/details?id=org.edgeever.mobile), with APKs also downloadable from GitHub Releases; iOS app currently under App Store review; native desktop apps available for Apple Silicon and Intel Macs.
 
 ## Deployment
 
@@ -101,11 +102,12 @@ EdgeEver can be installed as a PWA on desktop or mobile home screens. On desktop
 
 ## Browser Web Clipper
 
-The Chrome/Edge web clipper is officially published. You can install it directly from the link below (Microsoft Edge users can also install directly from the Chrome Web Store):
+The Web Clipper is officially published for Chrome, Microsoft Edge, and Firefox. Install it from the store for your browser (Microsoft Edge users can install the Chrome Web Store version directly):
 
 - [Chrome Web Store Link](https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo)
+- [Firefox Add-ons Link](https://addons.mozilla.org/firefox/addon/edgeever-web-clipper/)
 
-The same clipper code also supports Firefox. Until the Firefox Add-ons listing is published, see the [extension development guide](apps/extension/README.md#firefox) to build and temporarily load the Firefox package from source.
+Developers can also use the [extension development guide](apps/extension/README.md) to build and load the extension from source.
 
 ## Native Clients
 

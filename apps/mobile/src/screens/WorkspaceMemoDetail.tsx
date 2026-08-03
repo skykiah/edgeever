@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { resolveMemoContentMarkdown, type MemoDetail } from "@edgeever/shared";
+import { MEMO_CONTENT_STYLE, resolveMemoContentMarkdown, type MemoDetail } from "@edgeever/shared";
 import { ActivityIndicator, Image as RNImage, Platform, ScrollView, StyleSheet, Text as RNText, useWindowDimensions, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { Modal } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Markdown, { type ASTNode, type RenderRules } from "react-native-markdown-display";
 import { SvgXml } from "react-native-svg";
-import { ChevronDown, ChevronLeft, ChevronRight, History, MoreHorizontal, Pencil, RotateCcw, Search, Tag, Trash2, X } from "../components/icons";
+import { ChevronDown, ChevronLeft, ChevronRight, History, MoreHorizontal, Pencil, RotateCcw, Search, Share2, Tag, Trash2, X } from "../components/icons";
 import { Pressable, Text, TextInput } from "../components/LocalizedText";
 import { MobileMermaidDiagram, MobileMermaidProvider } from "../components/MobileMermaid";
 import { getMobileMarkdownFenceLanguage, trimMobileMarkdownFenceContent } from "../lib/mobile-mermaid";
@@ -194,6 +194,7 @@ export const MemoDetailModal = ({
   isLoading,
   isRestoring,
   isSaving,
+  isSharing,
   memo,
   notebookName,
   onClose,
@@ -202,6 +203,7 @@ export const MemoDetailModal = ({
   onOpenRevisions,
   onResolveSyncConflict,
   onRestore,
+  onShare,
   syncStatus,
   visible,
 }: {
@@ -209,6 +211,7 @@ export const MemoDetailModal = ({
   isLoading: boolean;
   isRestoring: boolean;
   isSaving: boolean;
+  isSharing: boolean;
   memo: MemoDetail | null;
   notebookName: string;
   onClose: () => void;
@@ -217,6 +220,7 @@ export const MemoDetailModal = ({
   onOpenRevisions: (memo: MemoDetail) => void;
   onResolveSyncConflict: (memo: MemoDetail) => void;
   onRestore: (memo: MemoDetail) => void;
+  onShare: (memo: MemoDetail) => void;
   syncStatus: MobileSyncQueueItem["status"] | null;
   visible: boolean;
 }) => {
@@ -231,7 +235,13 @@ export const MemoDetailModal = ({
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const localePreference = useMobileLocalePreference();
   const themedDetailMarkdownStyles = useMemo(
-    () => resolveMobileThemeStyles(detailMarkdownStyles, resolvedTheme),
+    () => ({
+      ...resolveMobileThemeStyles(detailMarkdownStyles, resolvedTheme),
+      hr: {
+        ...detailMarkdownStyles.hr,
+        backgroundColor: MEMO_CONTENT_STYLE.divider.color[resolvedTheme],
+      },
+    }),
     [resolvedTheme]
   );
   const detailMarkdownRules = useMemo<RenderRules>(() => {
@@ -399,6 +409,17 @@ export const MemoDetailModal = ({
             </Pressable>
             {memo && !memo.isDeleted ? (
               <Pressable
+                accessibilityLabel="分享笔记"
+                accessibilityRole="button"
+                disabled={isSharing}
+                onPress={() => onShare(memo)}
+                style={[styles.detailHeaderIconButton, isSharing && styles.buttonDisabled]}
+              >
+                {isSharing ? <ActivityIndicator color="#475569" size="small" /> : <Share2 color="#475569" size={20} />}
+              </Pressable>
+            ) : null}
+            {memo && !memo.isDeleted ? (
+              <Pressable
                 accessibilityLabel="版本历史"
                 accessibilityRole="button"
                 onPress={() => onOpenRevisions(memo)}
@@ -559,8 +580,8 @@ const HighlightedDetailText = ({
 const detailMarkdownStyles = StyleSheet.create({
   body: {
     color: "#0f172a",
-    fontSize: 17,
-    lineHeight: 27,
+    fontSize: MEMO_CONTENT_STYLE.body.fontSize,
+    lineHeight: MEMO_CONTENT_STYLE.body.lineHeight,
   },
   blockquote: {
     backgroundColor: "#f8fafc",
@@ -613,9 +634,9 @@ const detailMarkdownStyles = StyleSheet.create({
     marginTop: 14,
   },
   hr: {
-    backgroundColor: "#66ca80",
-    height: 1,
-    marginVertical: 24,
+    backgroundColor: MEMO_CONTENT_STYLE.divider.color.light,
+    height: MEMO_CONTENT_STYLE.divider.thickness,
+    marginVertical: MEMO_CONTENT_STYLE.divider.marginVertical,
   },
   link: {
     color: "#059669",

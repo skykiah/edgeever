@@ -9,7 +9,7 @@ import { TableKit } from "@tiptap/extension-table";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import * as Clipboard from "expo-clipboard";
-import type { TiptapDoc } from "@edgeever/shared";
+import { getImageReferrerPolicy, type TiptapDoc } from "@edgeever/shared";
 import {
   DEFAULT_IMAGE_WIDTH_PERCENT,
   IMAGE_WIDTH_PRESETS,
@@ -974,6 +974,10 @@ const createProtectedImageExtension = (
         preview.alt = "";
         const previewSource = String(node.attrs.title ?? "");
         if (previewSource) {
+          const previewReferrerPolicy = getImageReferrerPolicy(previewSource);
+          if (previewReferrerPolicy) {
+            preview.referrerPolicy = previewReferrerPolicy;
+          }
           preview.src = previewSource;
         }
 
@@ -1010,6 +1014,10 @@ const createProtectedImageExtension = (
           activeRequestId: number
         ) => {
           const preload = document.createElement("img");
+          const preloadReferrerPolicy = getImageReferrerPolicy(displaySource);
+          if (preloadReferrerPolicy) {
+            preload.referrerPolicy = preloadReferrerPolicy;
+          }
           preload.onload = () => {
             if (activeRequestId !== requestId) {
               return;
@@ -1109,6 +1117,12 @@ const createProtectedImageExtension = (
         const alt = String(attributes.alt ?? "");
         const title = String(attributes.title ?? "");
         image.alt = alt;
+        const referrerPolicy = getImageReferrerPolicy(source);
+        if (referrerPolicy) {
+          image.referrerPolicy = referrerPolicy;
+        } else {
+          image.removeAttribute("referrerpolicy");
+        }
         if (title) {
           image.title = title;
         } else {

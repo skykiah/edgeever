@@ -51,6 +51,7 @@ import {
   Modal,
   Platform,
   RefreshControl,
+  Share as NativeShare,
   ScrollView,
   StyleSheet,
   Text as RNText,
@@ -832,6 +833,25 @@ export const WorkspaceScreen = ({
     },
   });
 
+  const shareMemoMutation = useMutation({
+    mutationFn: async (memo: MemoDetail) => {
+      if (!client || !session) {
+        throw new Error("Client is not ready");
+      }
+
+      const response = await client.createMemoShare(memo.id);
+      const shareUrl = `${session.baseUrl.replace(/\/+$/, "")}/share/${encodeURIComponent(response.share.token)}`;
+      await NativeShare.share({
+        message: `${memo.title?.trim() || DEFAULT_MEMO_TITLE}\n${shareUrl}`,
+        title: memo.title?.trim() || DEFAULT_MEMO_TITLE,
+        url: shareUrl,
+      });
+    },
+    onError: () => {
+      Alert.alert("分享失败", "无法创建分享链接，请检查网络后重试。");
+    },
+  });
+
   const moveMemosMutation = useMutation({
     mutationFn: async ({ memoIds, notebookId }: { memoIds: string[]; notebookId: string }) => {
       if (!client) {
@@ -1036,6 +1056,7 @@ export const WorkspaceScreen = ({
         isLoading={memoDetailQuery.isLoading}
         isRestoring={restoreMemoMutation.isPending}
         isSaving={updateMemoMutation.isPending || localUpdateMemoMutation.isPending}
+        isSharing={shareMemoMutation.isPending}
         memo={selectedMemo}
         notebookName={notebooks.find((notebook) => notebook.id === selectedMemo?.notebookId)?.name ?? "未分类"}
         onClose={closeDetail}
@@ -1044,6 +1065,7 @@ export const WorkspaceScreen = ({
         onOpenRevisions={setRevisionMemo}
         onResolveSyncConflict={handleMemoSyncConflict}
         onRestore={(memo) => restoreMemoMutation.mutate(memo)}
+        onShare={(memo) => shareMemoMutation.mutate(memo)}
         syncStatus={selectedMemoSyncStatus}
         visible={Boolean(selectedMemoId)}
       />

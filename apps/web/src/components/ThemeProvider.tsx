@@ -56,6 +56,8 @@ export const EDITOR_THEME_NAMES = [
   "default",
   "minimal-emerald",
   "outline-emerald",
+  "wechat-green",
+  "modern-mint",
   "custom",
 ] as const;
 export type EditorThemeName = string;

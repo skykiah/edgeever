@@ -43,12 +43,13 @@ EdgeEver 是一款现代化的开源笔记工作区。它为你找回经典印�
 - **优雅的双视图编辑**：桌面端支持在富文本与 Markdown 源码视图之间自由切换。
 - **Mermaid 架构图与流程图渲染**：原生支持 Mermaid 代码块渲染，视图切换时完整保留可编辑源码，让绘制逻辑图表更直观。
 - **笔记历史版本回溯**：自动记录修改历史，随时查阅与还原过往版本。
+- **可撤销的只读分享**：为任意笔记创建难以猜测的公开链接，他人无需登录即可查看最新保存的正文与附件，并可随时取消分享。
 - **智能前端图片压缩**：图片上传前在浏览器端静默完成压缩，常见截图与大图精简 50%-90% 体积，加载更迅速、存储更省心。
 - **通用文件附件支持**：支持轻松上传并插入 PDF、Office 文档、压缩包及音视频等各种附件。
 - **高效多选与批量操作**：支持笔记批量合并、批量移动，以及笔记本拖拽排序与层级调整。
 - **离线草稿与同步队列**：网络不稳定时自动保存离线草稿，恢复连线后自动入队同步。
 - **多账号与个人空间隔离**：单实例支持创建多个独立账号，用户数据相互隔离，配备直观的管理员账号管理与安全加密机制。
-- **全平台多端覆盖**：Chrome/Edge 网页裁剪插件已上架 Chrome Web Store，并提供可从源码构建的 Firefox 兼容版本；支持安装为 PWA 应用；原生 Android App 已上架 [Google Play](https://play.google.com/store/apps/details?id=org.edgeever.mobile)，也可从 GitHub Releases 下载 APK；iOS App 当前仍在 App Store 审核中；原生桌面端支持 Apple Silicon 和 Intel Mac。
+- **全平台多端覆盖**：网页裁剪插件已分别上架 Chrome Web Store（Chrome/Edge）与 Firefox Add-ons（Firefox）；支持安装为 PWA 应用；原生 Android App 已上架 [Google Play](https://play.google.com/store/apps/details?id=org.edgeever.mobile)，也可从 GitHub Releases 下载 APK；iOS App 当前仍在 App Store 审核中；原生桌面端支持 Apple Silicon 和 Intel Mac。
 
 ## 部署
 
@@ -103,11 +104,12 @@ PC 端请使用 Chrome/Edge 打开站点，点击地址栏右侧的“安装”�
 
 ## 浏览器网页裁剪插件
 
-Chrome/Edge 网页裁剪插件已正式上架，您可以通过以下链接直接安装使用（Edge 浏览器亦可直接在 Chrome 应用商店中安装）：
+网页裁剪插件已在 Chrome、Microsoft Edge 与 Firefox 正式上架。请从对应的浏览器商店安装（Edge 浏览器亦可直接安装 Chrome Web Store 版本）：
 
 - [Chrome Web Store 安装地址](https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo)
+- [Firefox Add-ons 安装地址](https://addons.mozilla.org/zh-CN/firefox/addon/edgeever-web-clipper/)
 
-同一套裁剪插件代码也已支持 Firefox。在 Firefox Add-ons 商店版本正式发布前，可参考[扩展开发说明](apps/extension/README.md#firefox)从源码构建并临时加载 Firefox 版本。
+开发者也可参考[扩展开发说明](apps/extension/README.md)从源码构建并加载插件。
 
 ## 关于客户端
 

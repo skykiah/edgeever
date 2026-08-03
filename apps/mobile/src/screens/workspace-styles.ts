@@ -1,4 +1,5 @@
 import { StyleSheet } from "react-native";
+import { MEMO_CONTENT_STYLE } from "@edgeever/shared";
 import { MOBILE_UI_METRICS } from "@edgeever/shared/mobile-ui";
 import { resolveMobileThemeStyles, type MobileResolvedTheme } from "../lib/mobile-theme";
 
@@ -1556,8 +1557,8 @@ const baseWorkspaceStyles = StyleSheet.create({
   },
   detailMarkdown: {
     color: "#1f2937",
-    fontSize: 16,
-    lineHeight: 25,
+    fontSize: MEMO_CONTENT_STYLE.body.fontSize,
+    lineHeight: MEMO_CONTENT_STYLE.body.lineHeight,
     marginTop: 20,
   },
   noteSearchPanel: {

@@ -59,6 +59,7 @@ export const Quote = createIcon("message-square");
 export const RefreshCw = createIcon("refresh-cw");
 export const RotateCcw = createIcon("rotate-ccw");
 export const Search = createIcon("search");
+export const Share2 = createIcon("share-2");
 export const ShieldCheck = createIcon("shield");
 export const SlidersHorizontal = createIcon("sliders");
 export const Sparkles = createIcon("star");

@@ -1,0 +1,175 @@
+import type { MemoShare, PublicMemoShare, TiptapDoc } from "@edgeever/shared";
+import type { Hono } from "hono";
+import type { AppEnv } from "./api-context";
+import { audit } from "./audit";
+import { randomToken } from "./auth-crypto";
+import { createId, isoNow, parseJsonArray } from "./entity-utils";
+import { notFound } from "./http-errors";
+import { getAuditActor, getWorkspaceId, requireUser } from "./request-auth";
+
+const SHARE_TOKEN_BYTES = 32;
+const SHARE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+type MemoShareRow = { memo_id: string; token: string; created_at: string; updated_at: string };
+type PublicMemoShareRow = {
+  title: string | null;
+  content_json: string;
+  content_markdown: string;
+  tags_json: string;
+  updated_at: string;
+};
+type SharedResourceRow = {
+  object_key: string;
+  kind: "image" | "attachment";
+  mime_type: string | null;
+  filename: string | null;
+};
+
+const mapMemoShare = (row: MemoShareRow): MemoShare => ({
+  memoId: row.memo_id,
+  token: row.token,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const normalizeFilename = (filename: string) =>
+  filename.trim().replace(/[\\/]/g, "-").replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 160);
+
+const contentDisposition = (kind: SharedResourceRow["kind"], filename: string | null) => {
+  if (!filename) return kind === "image" ? "inline" : "attachment";
+  const fallback = normalizeFilename(filename).replace(/"/g, "'");
+  const disposition = kind === "image" ? "inline" : "attachment";
+  return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+};
+
+const normalizeShareToken = (value: string) => {
+  const token = value.trim();
+  return SHARE_TOKEN_PATTERN.test(token) ? token : null;
+};
+
+export const registerPublicShareRoutes = (app: Hono<AppEnv>) => {
+  app.get("/api/public/shares/:token", async (c) => {
+    const token = normalizeShareToken(c.req.param("token"));
+    if (!token) return notFound(c, "Shared note not found");
+
+    const row = await c.env.storage.db.prepare(
+      `SELECT m.title, mc.content_json, mc.content_markdown, m.tags_json, m.updated_at
+       FROM memo_shares ms
+       INNER JOIN memos m ON m.id = ms.memo_id AND m.workspace_id = ms.workspace_id
+       INNER JOIN memo_contents mc ON mc.memo_id = m.id
+       WHERE ms.token = ? AND m.is_deleted = 0
+       LIMIT 1`
+    ).bind(token).first<PublicMemoShareRow>();
+    if (!row) return notFound(c, "Shared note not found");
+
+    const share: PublicMemoShare = {
+      title: row.title,
+      contentJson: JSON.parse(row.content_json) as TiptapDoc,
+      contentMarkdown: row.content_markdown,
+      tags: parseJsonArray(row.tags_json),
+      updatedAt: row.updated_at,
+    };
+    c.header("Cache-Control", "private, no-store");
+    c.header("X-Robots-Tag", "noindex, nofollow, noarchive");
+    return c.json({ share });
+  });
+
+  app.get("/api/public/shares/:token/resources/:resourceId/blob", async (c) => {
+    const token = normalizeShareToken(c.req.param("token"));
+    if (!token) return notFound(c, "Shared resource not found");
+
+    const resource = await c.env.storage.db.prepare(
+      `SELECT r.object_key, r.kind, r.mime_type, r.filename
+       FROM memo_shares ms
+       INNER JOIN memos m ON m.id = ms.memo_id AND m.workspace_id = ms.workspace_id
+       INNER JOIN resources r ON r.memo_id = m.id
+       WHERE ms.token = ? AND r.id = ? AND m.is_deleted = 0 AND r.is_deleted = 0
+       LIMIT 1`
+    ).bind(token, c.req.param("resourceId")).first<SharedResourceRow>();
+    if (!resource) return notFound(c, "Shared resource not found");
+
+    const object = await c.env.storage.resources.get(resource.object_key);
+    if (!object) return notFound(c, "Shared resource not found");
+
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set("Content-Type", resource.mime_type ?? headers.get("Content-Type") ?? "application/octet-stream");
+    headers.set("Content-Length", String(object.size));
+    headers.set("Content-Disposition", contentDisposition(resource.kind, resource.filename));
+    headers.set("Cache-Control", "private, no-store");
+    headers.set("X-Content-Type-Options", "nosniff");
+    headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+    return new Response(object.body, { headers });
+  });
+};
+
+export const registerMemoShareRoutes = (app: Hono<AppEnv>) => {
+  app.get("/api/v1/memos/:id/share", async (c) => {
+    const denied = requireUser(c);
+    if (denied) return denied;
+
+    const row = await c.env.storage.db.prepare(
+      `SELECT ms.memo_id, ms.token, ms.created_at, ms.updated_at
+       FROM memo_shares ms
+       INNER JOIN memos m ON m.id = ms.memo_id AND m.workspace_id = ms.workspace_id
+       WHERE ms.memo_id = ? AND ms.workspace_id = ? AND m.is_deleted = 0
+       LIMIT 1`
+    ).bind(c.req.param("id"), getWorkspaceId(c)).first<MemoShareRow>();
+    return c.json({ share: row ? mapMemoShare(row) : null });
+  });
+
+  app.post("/api/v1/memos/:id/share", async (c) => {
+    const denied = requireUser(c);
+    if (denied) return denied;
+
+    const memoId = c.req.param("id");
+    const workspaceId = getWorkspaceId(c);
+    const memo = await c.env.storage.db.prepare(
+      `SELECT id FROM memos WHERE id = ? AND workspace_id = ? AND is_deleted = 0`
+    ).bind(memoId, workspaceId).first<{ id: string }>();
+    if (!memo) return notFound(c, "Memo not found");
+
+    const existing = await c.env.storage.db.prepare(
+      `SELECT memo_id, token, created_at, updated_at FROM memo_shares WHERE memo_id = ? AND workspace_id = ?`
+    ).bind(memoId, workspaceId).first<MemoShareRow>();
+    if (existing) return c.json({ share: mapMemoShare(existing) });
+
+    const now = isoNow();
+    const token = randomToken(SHARE_TOKEN_BYTES);
+    const actor = getAuditActor(c);
+    await c.env.storage.db.prepare(
+      `INSERT OR IGNORE INTO memo_shares (id, memo_id, workspace_id, token, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).bind(createId("share"), memoId, workspaceId, token, actor.actorId, now, now).run();
+    const created = await c.env.storage.db.prepare(
+      `SELECT memo_id, token, created_at, updated_at FROM memo_shares WHERE memo_id = ? AND workspace_id = ?`
+    ).bind(memoId, workspaceId).first<MemoShareRow>();
+    if (!created) {
+      throw new Error("Could not allocate a unique memo share token");
+    }
+    const isNewShare = created.token === token;
+    if (isNewShare) {
+      await audit(c.env.storage.db, actor.actorType, actor.actorId, "memo.share_create", "memo", memoId, {});
+    }
+    return c.json({ share: mapMemoShare(created) }, isNewShare ? 201 : 200);
+  });
+
+  app.delete("/api/v1/memos/:id/share", async (c) => {
+    const denied = requireUser(c);
+    if (denied) return denied;
+
+    const memoId = c.req.param("id");
+    const workspaceId = getWorkspaceId(c);
+    const existing = await c.env.storage.db.prepare(
+      `SELECT memo_id FROM memo_shares WHERE memo_id = ? AND workspace_id = ?`
+    ).bind(memoId, workspaceId).first<{ memo_id: string }>();
+    if (!existing) return notFound(c, "Active share not found");
+
+    await c.env.storage.db.prepare(
+      `DELETE FROM memo_shares WHERE memo_id = ? AND workspace_id = ?`
+    ).bind(memoId, workspaceId).run();
+    const actor = getAuditActor(c);
+    await audit(c.env.storage.db, actor.actorType, actor.actorId, "memo.share_revoke", "memo", memoId, {});
+    return c.json({ ok: true });
+  });
+};

@@ -154,6 +154,7 @@ import {
 } from "./request-auth";
 import { registerTagRoutes } from "./tag-routes";
 import { registerNotebookRoutes } from "./notebook-routes";
+import { registerMemoShareRoutes, registerPublicShareRoutes } from "./share-routes";
 
 // Compatibility aliases keep the existing SQL-heavy implementation small
 // while routing its dependency through the platform-neutral contract above.
@@ -464,6 +465,8 @@ app.get("/api/health", async (c) => {
 });
 
 app.get("/api/openapi.json", (c) => c.json(openApiSpec));
+
+registerPublicShareRoutes(app);
 
 app.get("/api/v1/auth/session", async (c) => {
   const authMode = await getInstanceAuthMode(c.env);
@@ -1112,6 +1115,7 @@ app.get("/api/v1/sync/changes", async (c) => {
 });
 
 registerTagRoutes(app);
+registerMemoShareRoutes(app);
 
 app.get("/api/v1/templates", async (c) => {
   const rows = await c.env.storage.db.prepare(
@@ -2575,6 +2579,7 @@ app.delete("/api/v1/memos/:id", async (c) => {
   }
 
   await c.env.storage.db.batch([
+    c.env.storage.db.prepare(`DELETE FROM memo_shares WHERE memo_id = ? AND workspace_id = ?`).bind(id, workspaceId),
     c.env.storage.db.prepare(
       `UPDATE memos
        SET is_deleted = 1, deleted_at = ?, updated_at = ?
@@ -4309,6 +4314,7 @@ const deleteMemosRecord = async (
     }
   } else {
     statements.push(
+      db.prepare(`DELETE FROM memo_shares WHERE workspace_id = ? AND memo_id IN (${placeholders})`).bind(workspaceId, ...uniqueMemoIds),
       db
         .prepare(
           `UPDATE memos
@@ -4995,6 +5001,7 @@ const mergeMemosRecord = async (
          WHERE workspace_id = ? AND id IN (${placeholders})`
       )
       .bind(now, newMemoId, now, now, workspaceId, ...uniqueMemoIds),
+    db.prepare(`DELETE FROM memo_shares WHERE workspace_id = ? AND memo_id IN (${placeholders})`).bind(workspaceId, ...uniqueMemoIds),
     db.prepare(`DELETE FROM memos_fts WHERE memo_id IN (${placeholders})`).bind(...uniqueMemoIds),
     db
       .prepare(

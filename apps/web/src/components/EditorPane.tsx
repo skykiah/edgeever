@@ -5,6 +5,7 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
+import { mergeAttributes } from "@tiptap/core";
 import Placeholder from "@tiptap/extension-placeholder";
 import { TableKit } from "@tiptap/extension-table";
 import { useTranslation } from "react-i18next";
@@ -69,6 +70,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { useTheme } from "./ThemeProvider";
 import { sanitizeAndScopeCss } from "@/lib/css-sandbox";
 import { RevisionHistoryDialog } from "./dialogs/RevisionHistoryDialog";
+import { ShareMemoDialog } from "./dialogs/ShareMemoDialog";
 import { api } from "@/lib/api";
 import { isDesktopResourceRuntime, stageDesktopResource, toDesktopResourceUrl } from "@/lib/desktop-resources";
 import { cn, formatDateTime, parseTagsText } from "@/lib/utils";
@@ -76,6 +78,7 @@ import { EDITOR_CONTENT_MAX_WIDTH, EDITOR_CONTENT_MAX_WIDTH_COLLAPSED } from "@/
 import {
   countMemoCharacters,
   docToMarkdown,
+  MEMO_CONTENT_STYLE,
   markdownToDoc,
   resolveMemoContentDoc,
   type Notebook,
@@ -84,6 +87,7 @@ import {
   type MemoEditSession,
   type TiptapDoc,
   createMemoLinkHref,
+  getImageReferrerPolicy,
   parseMemoLinkHref,
 } from "@edgeever/shared";
 import {
@@ -373,7 +377,13 @@ const ResizableImageNodeView = ({ editor, node, selected, updateAttributes }: No
       style={{ width: `${width}%` }}
       data-width={width}
     >
-      <img src={src} alt={alt} title={title || undefined} draggable={false} />
+      <img
+        src={src}
+        alt={alt}
+        title={title || undefined}
+        draggable={false}
+        referrerPolicy={getImageReferrerPolicy(src)}
+      />
       {editable && selected && (
         <div className="edgeever-image-controls" contentEditable={false}>
           <div className="edgeever-image-presets" aria-label={t("editor.imageScale")}>
@@ -421,6 +431,17 @@ const ResizableImage = Image.extend({
   },
   addNodeView() {
     return ReactNodeViewRenderer(ResizableImageNodeView);
+  },
+  renderHTML({ HTMLAttributes }) {
+    const referrerPolicy = getImageReferrerPolicy(HTMLAttributes.src);
+    return [
+      "img",
+      mergeAttributes(
+        this.options.HTMLAttributes,
+        HTMLAttributes,
+        referrerPolicy ? { referrerpolicy: referrerPolicy } : {},
+      ),
+    ];
   },
 });
 
@@ -624,6 +645,7 @@ const RichEditorPane = ({
   const [editorContentVersion, setEditorContentVersion] = useState(0);
   const [imageUploadState, setImageUploadState] = useState<"idle" | "compressing" | "uploading" | "error">("idle");
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [systemInfoOpen, setSystemInfoOpen] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [mobileNotebookSheetOpen, setMobileNotebookSheetOpen] = useState(false);
@@ -1985,7 +2007,7 @@ const RichEditorPane = ({
     saveState === "error" || saveState === "conflict"
       ? "bg-rose-50 text-rose-700"
       : saveState === "queued"
-        ? "bg-amber-50/60 text-amber-600/80"
+        ? "bg-slate-50 text-slate-400"
         : saveState === "saving" || hasUnsavedChanges
           ? "bg-emerald-50 text-emerald-700"
           : "bg-slate-100 text-slate-500";
@@ -2479,6 +2501,16 @@ const RichEditorPane = ({
                   <History className="h-4 w-4 text-slate-500" />
                   {t("editor.versionHistory")}
                 </DropdownMenuItem>
+                {!readOnly && (
+                  <DropdownMenuItem
+                    className="flex h-9 w-full items-center gap-2 px-3 text-left text-sm text-slate-700 hover:bg-slate-50 cursor-pointer outline-none"
+                    disabled={isLocalMemoId(memo.id)}
+                    onClick={() => setShareOpen(true)}
+                  >
+                    <Link2 className="h-4 w-4 text-slate-500" />
+                    {t("sharing.action")}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   className="flex h-9 w-full items-center gap-2 px-3 text-left text-sm text-slate-700 hover:bg-slate-50 cursor-pointer outline-none"
                   onClick={handleExportMarkdown}
@@ -2714,12 +2746,24 @@ const RichEditorPane = ({
       <div
         ref={setEditorScrollContainerRef}
         data-editor-theme={
-          editorTheme === "default" || editorTheme === "minimal-emerald" || editorTheme === "outline-emerald"
+          editorTheme === "default" ||
+          editorTheme === "minimal-emerald" ||
+          editorTheme === "outline-emerald" ||
+          editorTheme === "wechat-green" ||
+          editorTheme === "modern-mint"
             ? editorTheme
             : "custom"
         }
-        style={
-          editorTheme !== "default" && editorTheme !== "minimal-emerald" && editorTheme !== "outline-emerald"
+        style={{
+          "--editor-body-font-size": `${MEMO_CONTENT_STYLE.body.fontSize}px`,
+          "--editor-body-line-height": String(MEMO_CONTENT_STYLE.body.lineHeight / MEMO_CONTENT_STYLE.body.fontSize),
+          "--memo-content-divider-color": MEMO_CONTENT_STYLE.divider.color[resolvedTheme],
+          "--memo-content-divider-spacing": `${MEMO_CONTENT_STYLE.divider.marginVertical}px`,
+          ...(editorTheme !== "default" &&
+          editorTheme !== "minimal-emerald" &&
+          editorTheme !== "outline-emerald" &&
+          editorTheme !== "wechat-green" &&
+          editorTheme !== "modern-mint"
             ? {
                 "--editor-theme-bg": (resolvedTheme === "dark" ? customEditorTheme.dark : customEditorTheme.light).background,
                 "--editor-theme-text": (resolvedTheme === "dark" ? customEditorTheme.dark : customEditorTheme.light).text,
@@ -2727,9 +2771,9 @@ const RichEditorPane = ({
                 "--editor-theme-accent": (resolvedTheme === "dark" ? customEditorTheme.dark : customEditorTheme.light).accent,
                 "--editor-theme-soft": (resolvedTheme === "dark" ? customEditorTheme.dark : customEditorTheme.light).soft,
                 "--editor-theme-border": (resolvedTheme === "dark" ? customEditorTheme.dark : customEditorTheme.light).border,
-              } as CSSProperties
-            : undefined
-        }
+              }
+            : {}),
+        } as CSSProperties}
         className={cn(
           "edgeever-editor relative min-h-0 flex-1 bg-white",
           useMobilePlainTextEditor ? "overflow-visible" : "overflow-y-auto"
@@ -2738,6 +2782,8 @@ const RichEditorPane = ({
         {editorTheme !== "default" &&
           editorTheme !== "minimal-emerald" &&
           editorTheme !== "outline-emerald" &&
+          editorTheme !== "wechat-green" &&
+          editorTheme !== "modern-mint" &&
           customEditorTheme.customCss && (
             <style
               data-theme-custom-css
@@ -2938,6 +2984,8 @@ const RichEditorPane = ({
       )}
 
       <SystemInfoDialog open={systemInfoOpen} onOpenChange={setSystemInfoOpen} />
+
+      <ShareMemoDialog memoId={memo.id} open={shareOpen} onOpenChange={setShareOpen} />
 
       {mobileNotebookSheetOpen && (
         <MobileNotebookSelectSheet
