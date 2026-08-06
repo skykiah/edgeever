@@ -53,8 +53,10 @@ ambiguous.
 - Keep `/api/*`, `/mcp`, `/api/openapi.json`, and `/api/health` unchanged.
 - Keep the current migration files append-only; do not fork the schema for
   Docker.
-- Store secrets in environment variables or Docker secrets, never in the
-  image or a mounted database.
+- Keep root secrets such as `EDGE_EVER_STORAGE_ENCRYPTION_KEY` in environment
+  variables or Docker secrets, never in the image or database. Credentials
+  entered through the instance settings may be stored only as AES-GCM
+  ciphertext protected by that deployment-level key.
 - Make `/data` the only required persistent application path so NAS users can
   back up one volume.
 - Support `EDGE_EVER_AUTH_USERNAME`, `EDGE_EVER_AUTH_PASSWORD`, and session

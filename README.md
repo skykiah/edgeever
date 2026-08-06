@@ -28,7 +28,7 @@ Many long-time **Evernote** users simply want a **reliable, open, and fast** per
 
 - Demo: [https://demo.edgeever.org](https://demo.edgeever.org)
 
-The public demo resets every Monday at 1:00 AM (China Standard Time) and restores sample notes. Do not store private content there.
+The public demo resets every day at 3:00 AM (China Standard Time) and restores sample notes. Do not store private content there.
 
 ## Features
 
@@ -41,15 +41,17 @@ The public demo resets every Monday at 1:00 AM (China Standard Time) and restore
 - **Unlimited Nested Notebooks**: Organize your knowledge with arbitrary folder depth.
 - **One-Click Rich Copy for Newsletters & Blogs**: Designed for creators to convert notes into beautifully formatted rich text with inline CSS, ready to paste directly into Substack, Medium, WordPress, or newsletter editors without extra tools.
 - **Seamless Dual-View Editor**: Switch effortlessly between intuitive rich text editing and Markdown source code on desktop.
+- **Convenient Single-Note Export**: Export the current note directly as Markdown or PDF for standalone storage, sharing, or publishing.
 - **Native Mermaid Diagram Rendering**: Render clear flowcharts, sequence diagrams, and mind maps directly in notes, preserving clean, editable source code across Markdown and rich text views.
 - **Revision History**: Inspect and restore previous iterations of your notes with built-in version tracking.
-- **Revocable Read-Only Sharing**: Create an unguessable public link for any note so others can view its latest saved content and attachments without signing in, then revoke access at any time.
+- **Public Note Sharing**: Share a note publicly and stop sharing it at any time.
+- **WeChat Article Clipping on Mobile**: Share a WeChat Official Account article to EdgeEver on your phone to extract its content and save it as an editable note.
 - **Smart Local Image Compression**: Client-side WebP compression reduces file sizes by 50%-90% before uploading, saving storage and speeding up page loads without extra server costs.
 - **Universal File Attachments**: Attach and preview PDFs, Office documents, zip files, audio, and video directly within notes.
 - **Batch Operations & Flexible Sorting**: Easily merge or relocate multiple notes, with drag-and-drop notebook reordering.
 - **Offline Drafts & Queueing**: Draft and edit uninterrupted while offline; changes automatically sync once reconnected.
 - **Multi-Tenant Account Isolation**: Host multiple user accounts on a single instance with strictly partitioned spaces and clean admin account management.
-- **Everywhere You Need It**: The Web Clipper is available from the Chrome Web Store for Chrome/Edge and from Firefox Add-ons for Firefox; installable as a PWA; native Android app available on [Google Play](https://play.google.com/store/apps/details?id=org.edgeever.mobile), with APKs also downloadable from GitHub Releases; iOS app currently under App Store review; native desktop apps available for Apple Silicon and Intel Macs.
+- **Everywhere You Need It**: Available on the Web, [Android](https://play.google.com/store/apps/details?id=org.edgeever.mobile), and [macOS](https://github.com/tianma-if/edgeever/releases), with the iOS app under App Store review and Windows coming soon; the Web Clipper supports [Chrome](https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo), [Edge](https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo), and [Firefox](https://addons.mozilla.org/firefox/addon/edgeever-web-clipper/).
 
 ## Deployment
 
@@ -93,13 +95,6 @@ Once deployed, a single instance supports multi-account login.
 
 The instance administrator can create, disable, or reset member accounts in **Profile** -> **User accounts**. Each member gets a fully isolated personal workspace, including notebooks, notes, attachments, Trash, import/export, and MCP tokens.
 
-
-## PWA Installation
-
-EdgeEver can be installed as a PWA on desktop or mobile home screens. On desktop, open the site in Chrome or Edge and use the install icon in the address bar. On Android, open it in Chrome, use the three-dot menu, and choose **Add to Home screen** or **Install**. Avoid installing from embedded browsers such as WeChat.
-
-> Common pitfall: When installing the PWA on mobile, Chrome or Edge is recommended. Other mobile browsers may encounter compatibility issues or unexpected errors during installation.
-
 ## Browser Web Clipper
 
 The Web Clipper is officially published for Chrome, Microsoft Edge, and Firefox. Install it from the store for your browser (Microsoft Edge users can install the Chrome Web Store version directly):
@@ -111,9 +106,17 @@ Developers can also use the [extension development guide](apps/extension/README.
 
 ## Native Clients
 
+Native clients offer a smoother, more reliable experience with deeper system integration, local storage, and offline editing. Changes sync incrementally when connectivity returns, making them ideal for frequent use and unreliable network conditions.
+
 The Android app is now available on [Google Play](https://play.google.com/store/apps/details?id=org.edgeever.mobile), with signed APKs also available from [GitHub Releases](https://github.com/tianma-if/edgeever/releases). The iOS app has been submitted and is currently under App Store review.
 
-The macOS app is available from [GitHub Releases](https://github.com/tianma-if/edgeever/releases) for both Apple Silicon and Intel Macs. The Windows version will be released once the code-signing certificate issue is resolved.
+The macOS app is available from [GitHub Releases](https://github.com/tianma-if/edgeever/releases). The Windows version will be released once the code-signing certificate issue is resolved.
+
+On platforms without a native client, EdgeEver can be installed as a PWA using Chrome or Edge.
+
+## Community and Feedback
+
+- Bugs, feature requests, and deployment issues: [GitHub Issues](https://github.com/tianma-if/edgeever/issues)
 
 ## Tech Stack
 
@@ -213,6 +216,12 @@ Image compression happens in the Web client before upload and is controlled by t
 
 EdgeEver avoids Worker-side image processing to reduce compute and image-processing quota usage. REST API and MCP upload paths store the file content provided by the client without additional server-side compression.
 
+## Advanced Object Storage
+
+The instance owner can open **Settings → Advanced → OSS object storage** to send new images and attachments to an S3-compatible service such as Alibaba Cloud OSS, Tencent COS, AWS S3, MinIO, or R2. Existing resources stay in their original store, so changing the default does not migrate or break historical attachments.
+
+Before saving third-party credentials on a Cloudflare deployment, configure the `EDGE_EVER_STORAGE_ENCRYPTION_KEY` Worker Secret with a random value of at least 32 characters. EdgeEver uses this instance-level key to encrypt the access secret stored in D1. Keep the key stable and backed up; it is required to read resources that use the external store.
+
 ## Migration
 
 If you want to migrate notes from other platforms to EdgeEver, please refer to the following simple migration guides:
@@ -221,10 +230,6 @@ If you want to migrate notes from other platforms to EdgeEver, please refer to t
 - **flomo Migration**: Please refer to [docs/flomo-migration-guide.md](docs/flomo-migration-guide.md)
 - **Memos Migration**: Please refer to [docs/memos-migration-guide.md](docs/memos-migration-guide.md)
 - **Notion Migration**: Please refer to [docs/notion-migration-guide.md](docs/notion-migration-guide.md)
-
-## Community and Feedback
-
-- Bugs, feature requests, and deployment issues: [GitHub Issues](https://github.com/tianma-if/edgeever/issues)
 
 ## Docker Deployment Roadmap
 

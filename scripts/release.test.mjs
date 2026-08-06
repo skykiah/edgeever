@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  auditReleaseCommitCoverage,
   buildIssueBody,
   buildReleaseNotes,
   buildReleaseTitle,
@@ -23,6 +24,8 @@ describe("release automation", () => {
         "Run checks in parallel.",
         "--change-zh",
         "并行运行检查。",
+        "--change-commit",
+        "abc1234",
       ]),
     ).toMatchObject({
       issueTitle: "Improve release flow",
@@ -30,6 +33,7 @@ describe("release automation", () => {
       labels: ["enhancement"],
       changesEn: ["Run checks in parallel."],
       changesZh: ["并行运行检查。"],
+      changeCommits: ["abc1234"],
     });
   });
 
@@ -72,6 +76,8 @@ describe("release automation", () => {
         "Fix a bug.",
         "--change-zh",
         "修复问题。",
+        "--change-commit",
+        "abc1234",
       ])
     ).toThrow("--bump must be patch, minor, or major");
   });
@@ -98,11 +104,100 @@ describe("release automation", () => {
     const body = buildIssueBody({
       changesEn: ["Parallel checks."],
       changesZh: ["并行检查。"],
+      commitCoverageAudit: {
+        mappings: [{
+          changeIndex: 0,
+          commits: [{ sha: "aaaaaaaa11111111111111111111111111111111" }],
+        }],
+        ignored: [{
+          commit: { sha: "bbbbbbbb22222222222222222222222222222222" },
+          reason: "test-only coverage",
+        }],
+      },
     });
     expect(body).toContain("## Summary");
     expect(body).toContain("- Parallel checks.");
     expect(body).toContain("## 中文说明");
     expect(body).toContain("- 并行检查。");
+    expect(body).toContain("## Commit coverage audit");
+    expect(body).toContain("- Change 1: `aaaaaaaa`");
+    expect(body).toContain("- Excluded `bbbbbbbb`: test-only coverage");
+  });
+
+  test("requires every bilingual change to map to commits", () => {
+    expect(() =>
+      parseReleaseArgs([
+        "--issue-title",
+        "Missing commit mapping",
+        "--bump",
+        "patch",
+        "--label",
+        "bug",
+        "--change-en",
+        "Fix a bug.",
+        "--change-zh",
+        "修复问题。",
+      ])
+    ).toThrow("--change-commit");
+  });
+
+  test("audits complete commit coverage across changes and explicit ignores", () => {
+    const commits = [
+      { sha: "aaaaaaaa11111111111111111111111111111111", subject: "feat: add resource actions" },
+      { sha: "bbbbbbbb22222222222222222222222222222222", subject: "test: cover resource actions" },
+      { sha: "cccccccc33333333333333333333333333333333", subject: "fix: stabilize editor" },
+    ];
+    const audit = auditReleaseCommitCoverage({
+      commits,
+      changeCommits: ["aaaaaaaa,cccccccc"],
+      ignoredCommits: ["bbbbbbbb:test-only coverage"],
+    });
+    expect(audit.mappings[0].commits.map((commit) => commit.sha)).toEqual([
+      commits[0].sha,
+      commits[2].sha,
+    ]);
+    expect(audit.ignored).toEqual([{ commit: commits[1], reason: "test-only coverage" }]);
+  });
+
+  test("blocks a release when a commit is missing from the notes audit", () => {
+    const commits = [
+      { sha: "aaaaaaaa11111111111111111111111111111111", subject: "feat: documented" },
+      { sha: "bbbbbbbb22222222222222222222222222222222", subject: "fix: accidentally omitted" },
+    ];
+    expect(() => auditReleaseCommitCoverage({
+      commits,
+      changeCommits: ["aaaaaaaa"],
+      ignoredCommits: [],
+    })).toThrow("bbbbbbbb fix: accidentally omitted");
+  });
+
+  test("requires valid ignore reasons and rejects covered commits as ignored", () => {
+    const commits = [
+      { sha: "aaaaaaaa11111111111111111111111111111111", subject: "feat: documented" },
+    ];
+    expect(() => auditReleaseCommitCoverage({
+      commits,
+      changeCommits: ["aaaaaaaa"],
+      ignoredCommits: ["aaaaaaaa:no public impact"],
+    })).toThrow("both covered and ignored");
+    expect(() => auditReleaseCommitCoverage({
+      commits,
+      changeCommits: [],
+      ignoredCommits: ["aaaaaaaa"],
+    })).toThrow("<commit-sha>:<reason>");
+  });
+
+  test("automatically accounts for a resumable release version commit", () => {
+    const releaseCommit = {
+      sha: "dddddddd44444444444444444444444444444444",
+      subject: "chore: release v1.10.3 [skip ci]",
+    };
+    const audit = auditReleaseCommitCoverage({
+      commits: [releaseCommit],
+      changeCommits: [],
+      ignoredCommits: [],
+    });
+    expect(audit.ignored).toEqual([{ commit: releaseCommit, reason: "release automation commit" }]);
   });
 
   test("requires reused assets to keep name, size, and digest", () => {

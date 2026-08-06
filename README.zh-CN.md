@@ -28,7 +28,7 @@ EdgeEver 是一款现代化的开源笔记工作区。它为你找回经典印�
 
 - Demo 地址：[https://demo.edgeever.org](https://demo.edgeever.org)
 
-公开演示环境会在每周一凌晨 1:00（北京时间）自动重置并恢复示例笔记，请不要保存私密内容。
+公开演示环境会在每天凌晨 3:00（北京时间）自动重置并恢复示例笔记，请不要保存私密内容。
 
 ## 功能
 
@@ -41,15 +41,17 @@ EdgeEver 是一款现代化的开源笔记工作区。它为你找回经典印�
 - **无限层级笔记本**：轻松构建清晰的多级目录结构。
 - **微信公众号一键排版与复制**：专为中文创作者设计，支持将笔记一键转换为带行内样式的公众号美化格式，直接复制粘贴至微信公众号后台，告别复杂的第三方排版工具。
 - **优雅的双视图编辑**：桌面端支持在富文本与 Markdown 源码视图之间自由切换。
+- **单篇笔记便捷导出**：可将当前笔记直接导出为 Markdown 或 PDF，方便独立保存、分享与发布。
 - **Mermaid 架构图与流程图渲染**：原生支持 Mermaid 代码块渲染，视图切换时完整保留可编辑源码，让绘制逻辑图表更直观。
 - **笔记历史版本回溯**：自动记录修改历史，随时查阅与还原过往版本。
-- **可撤销的只读分享**：为任意笔记创建难以猜测的公开链接，他人无需登录即可查看最新保存的正文与附件，并可随时取消分享。
+- **公开笔记分享**：支持公开分享笔记，并可随时取消分享。
+- **移动 App 微信公众号文章剪藏**：在手机上将微信公众号文章分享至 EdgeEver，即可提取正文并保存为可继续编辑的笔记。
 - **智能前端图片压缩**：图片上传前在浏览器端静默完成压缩，常见截图与大图精简 50%-90% 体积，加载更迅速、存储更省心。
 - **通用文件附件支持**：支持轻松上传并插入 PDF、Office 文档、压缩包及音视频等各种附件。
 - **高效多选与批量操作**：支持笔记批量合并、批量移动，以及笔记本拖拽排序与层级调整。
 - **离线草稿与同步队列**：网络不稳定时自动保存离线草稿，恢复连线后自动入队同步。
 - **多账号与个人空间隔离**：单实例支持创建多个独立账号，用户数据相互隔离，配备直观的管理员账号管理与安全加密机制。
-- **全平台多端覆盖**：网页裁剪插件已分别上架 Chrome Web Store（Chrome/Edge）与 Firefox Add-ons（Firefox）；支持安装为 PWA 应用；原生 Android App 已上架 [Google Play](https://play.google.com/store/apps/details?id=org.edgeever.mobile)，也可从 GitHub Releases 下载 APK；iOS App 当前仍在 App Store 审核中；原生桌面端支持 Apple Silicon 和 Intel Mac。
+- **全平台多端覆盖**：支持 Web、[Android](https://play.google.com/store/apps/details?id=org.edgeever.mobile) 和 [macOS](https://github.com/tianma-if/edgeever/releases)，iOS 版正在 App Store 审核，Windows 版即将推出；网页裁剪插件支持 [Chrome](https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo)、[Edge](https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo) 和 [Firefox](https://addons.mozilla.org/zh-CN/firefox/addon/edgeever-web-clipper/)。
 
 ## 部署
 
@@ -65,7 +67,7 @@ EdgeEver 采用纯 Serverless 架构，完全运行在 Cloudflare 免费配额�
 请在线完成 EdgeEver 部署：
 1. Fork https://github.com/tianma-if/edgeever。
 2. 将这个 Fork 导入 Cloudflare Workers & Pages。
-3. 配置 D1、R2、`EDGE_EVER_AUTH_PASSWORD` Worker Secret 和生产环境 `main` 构建。
+3. 配置 D1、R2、`EDGE_EVER_AUTH_USERNAME`（预填为 `admin`，可自定义）、`EDGE_EVER_AUTH_PASSWORD` Worker Secret 和生产环境 `main` 构建。
 4. 启动首次构建，验证 `/api/health`、`/api/openapi.json` 和登录。
 5. 启用并手动运行一次 `Update deployed EdgeEver`。
 ```
@@ -78,7 +80,7 @@ EdgeEver 采用纯 Serverless 架构，完全运行在 Cloudflare 免费配额�
 
 1. **Fork 仓库**：在 GitHub 点击右上角 **Fork**，将项目 Fork 到您的个人账户下。
 2. **导入 Cloudflare**：登录 Cloudflare 控制台，进入 **Workers & Pages**，选择导入该 Fork 仓库。
-3. **绑定资源与密码**：绑定 D1 数据库（`DB`）、R2 存储桶（`RESOURCES`），并添加 Worker Secret `EDGE_EVER_AUTH_PASSWORD` 作为登录密码。
+3. **绑定资源与登录凭据**：绑定 D1 数据库（`DB`）、R2 存储桶（`RESOURCES`），设置 `EDGE_EVER_AUTH_USERNAME`（默认为 `admin`，可自定义），并添加 Worker Secret `EDGE_EVER_AUTH_PASSWORD` 作为管理员登录密码。
 4. **启动构建与验证**：使用默认构建配置启动首次构建，部署完成后访问 `/api/health` 确认返回 `200` 即可开始使用。
 
 > 📖 包含具体参数与构建命令的详细步骤，请查看 [在线部署完整文档](docs/deploy-cloudflare-button.zh-CN.md)。
@@ -93,15 +95,6 @@ EdgeEver 采用纯 Serverless 架构，完全运行在 Cloudflare 免费配额�
 
 实例管理员可以在 **个人中心** -> **账号管理** 中创建、停用成员账号或重置密码。每个成员拥有完全隔离的个人空间，包括笔记本、笔记、附件、回收站、导入导出和 MCP Token 等。
 
-
-## PWA 安装说明
-
-PWA 可以把 EdgeEver 像普通应用一样安装到桌面或手机主屏幕，打开更方便，也能配合浏览器能力提供更接近原生 App 的使用体验。
-
-PC 端请使用 Chrome/Edge 打开站点，点击地址栏右侧的“安装”图标并确认。Android 建议用 Chrome 打开站点，点右上角三点菜单，选择“添加到主屏幕”，再点“安装”。Edge 可尝试菜单中的“添加到手机 / 添加到主屏幕 / 安装应用”，不同版本可能只创建快捷方式。请不要从微信等 App 内置浏览器安装。
-
-> 常见踩坑：移动端安装 PWA 时，建议优先使用 Chrome 或 Edge。其他移动浏览器在安装过程中可能出现兼容性问题或异常报错。
-
 ## 浏览器网页裁剪插件
 
 网页裁剪插件已在 Chrome、Microsoft Edge 与 Firefox 正式上架。请从对应的浏览器商店安装（Edge 浏览器亦可直接安装 Chrome Web Store 版本）：
@@ -113,9 +106,27 @@ PC 端请使用 Chrome/Edge 打开站点，点击地址栏右侧的“安装”�
 
 ## 关于客户端
 
+原生客户端提供更流畅、稳定的使用体验，以及更完善的系统级集成，并支持本地存储与离线编辑。恢复联网后，内容会自动增量同步，适合高频使用和弱网场景。
+
 Android App 现已上架 [Google Play](https://play.google.com/store/apps/details?id=org.edgeever.mobile)，也可从 [GitHub Releases](https://github.com/tianma-if/edgeever/releases) 下载签名 APK。iOS App 已提交，目前仍在 App Store 审核中。
 
-macOS App 可从 [GitHub Releases](https://github.com/tianma-if/edgeever/releases) 下载，同时支持 Apple Silicon 和 Intel Mac。Windows 版本正在处理代码签名证书问题，解决后即可发布。
+macOS App 可从 [GitHub Releases](https://github.com/tianma-if/edgeever/releases) 下载。Windows 版本正在处理代码签名证书问题，解决后即可发布。
+
+暂无原生客户端的平台，可通过 Chrome 或 Edge 将 EdgeEver 安装为 PWA 使用。
+
+## 社区与反馈
+
+- Bug、功能建议和部署问题请优先提交 [GitHub Issues](https://github.com/tianma-if/edgeever/issues)，方便后续用户检索和复用解决方案。
+
+### 微信交流群
+
+欢迎加入 EdgeEver AI 交流群，讨论 EdgeEver 使用、AI 工具、智能体、工作流和其他 AI 话题。
+
+> 群二维码 7 天内有效。如果二维码过期，请添加微信 `m1245207870`，并备注“EdgeEver 进群”。
+
+<p align="center">
+  <img src="assets/wechat-group-qr.jpg" alt="EdgeEver AI 交流群二维码" width="260" />
+</p>
 
 ## 技术栈
 
@@ -216,6 +227,12 @@ https://你的域名/api/openapi.json
 
 Cloudflare Worker 侧执行图片处理会消耗计算/图片处理额度，因此 EdgeEver 将图片压缩放在 Web 客户端完成；REST API 或 MCP 上传入口会按客户端提供的文件内容直接入库，不再由服务端自动压缩。
 
+## 高级对象存储
+
+实例 Owner 可以进入**设置 → 高级设置 → OSS 对象存储**，让后续上传的图片和附件写入兼容 S3 API 的阿里云 OSS、腾讯云 COS、AWS S3、MinIO 或 R2。已有资源继续保留在原存储中，因此切换默认存储不会迁移历史附件，也不会让历史附件失效。
+
+在 Cloudflare 部署中保存第三方凭据前，需要先配置一个至少 32 个字符的随机 `EDGE_EVER_STORAGE_ENCRYPTION_KEY` Worker Secret。EdgeEver 会用这个实例级密钥加密保存在 D1 中的访问密钥。请保持该密钥稳定并妥善备份；读取外部存储中的资源时仍需要它。
+
 ## 导入与迁移 (Migration)
 
 如果你想从其他笔记软件迁移到 EdgeEver，请参考以下极简迁移指引：
@@ -223,21 +240,6 @@ Cloudflare Worker 侧执行图片处理会消耗计算/图片处理额度，因�
 - **印象笔记（Evernote）的迁入**：请参考 [docs/evernote-migration-guide.md](docs/evernote-migration-guide.md)
 - **Memos 笔记的迁入**：请参考 [docs/memos-migration-guide.md](docs/memos-migration-guide.md)
 - **Notion 笔记的迁入**：请参考 [docs/notion-migration-guide.md](docs/notion-migration-guide.md)
-
-## 社区与反馈
-
-- Bug、功能建议和部署问题请优先提交 [GitHub Issues](https://github.com/tianma-if/edgeever/issues)，方便后续用户检索和复用解决方案。
-- 微信：`m1245207870`（请备注 EdgeEver）
-
-### 微信交流群
-
-欢迎加入 EdgeEver AI 交流群，讨论 EdgeEver 使用、AI 工具、智能体、工作流和其他 AI 话题。
-
-> 群二维码 7 天内有效。如果二维码过期，请添加微信 `m1245207870`，并备注“EdgeEver 进群”。
-
-<p align="center">
-  <img src="assets/wechat-group-qr.jpg" alt="EdgeEver AI 交流群二维码" width="360" />
-</p>
 
 ## Docker 部署规划
 

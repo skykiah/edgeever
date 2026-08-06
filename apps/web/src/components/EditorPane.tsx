@@ -1,8 +1,10 @@
-import { useRef, useState, useEffect, useCallback, useMemo, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useRef, useState, useEffect, useCallback, useMemo, type CSSProperties, type FocusEvent as ReactFocusEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { NodeViewWrapper, ReactNodeViewRenderer, useEditor, EditorContent, type Editor, type NodeViewProps } from "@tiptap/react";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import type { Mark } from "@tiptap/pm/model";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { mergeAttributes } from "@tiptap/core";
@@ -63,6 +65,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { EditorToolbar } from "./EditorToolbar";
 import { EditorOutline } from "./EditorOutline";
 import { WeChatIcon } from "./WeChatIcon";
@@ -70,7 +80,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { useTheme } from "./ThemeProvider";
 import { sanitizeAndScopeCss } from "@/lib/css-sandbox";
 import { RevisionHistoryDialog } from "./dialogs/RevisionHistoryDialog";
-import { ShareMemoDialog } from "./dialogs/ShareMemoDialog";
+import { memoShareQueryKey, ShareMemoDialog } from "./dialogs/ShareMemoDialog";
 import { api } from "@/lib/api";
 import { isDesktopResourceRuntime, stageDesktopResource, toDesktopResourceUrl } from "@/lib/desktop-resources";
 import { cn, formatDateTime, parseTagsText } from "@/lib/utils";
@@ -100,12 +110,22 @@ import { codeBlockLowlight, EdgeEverCodeBlock } from "@/lib/code-block";
 import { compressImageForUpload } from "@/lib/image-compression";
 import { localDb, type MemoUpdateSyncPayload } from "@/lib/local-db";
 import { getMemoUpdateQueueId, isMemoUpdateAlreadyApplied, queueMemoUpdate, shouldQueueMemoSaveError } from "@/lib/sync-queue";
+import {
+  formatLocalDraftClipboardText,
+  formatMemoSaveConflictReason,
+  getMemoSaveConflictInfo,
+  getMemoSaveConflictInfoFromQueueItem,
+  type MemoSaveConflictInfo,
+} from "@/lib/memo-save-conflict";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { isLocalMemoId } from "@/lib/local-mirror";
+import { shouldAcceptRemoteMemoDetail } from "@/lib/memo-detail-freshness";
 import type { EdgeEverRepository } from "@/lib/repository";
 import {
   EDITOR_LOCAL_SAVE_DELAY_MS,
   getEditableMemoTitle,
   getNotebookMoveOptions,
+  type MemoDocumentActionRequest,
 } from "@/lib/app-helpers";
 import { copyEditorToWeChat, copyMarkdownToWeChat } from "@/lib/wechat-copy";
 import { ThemeBlock } from "./ThemeBlock";
@@ -120,6 +140,7 @@ import { processFilesSequentially } from "@/lib/file-batch";
 import { MEMO_ID_REMAPPED_EVENT } from "@/lib/sync-events";
 import { useStandaloneMobileEditor } from "@/hooks/useStandaloneMobileEditor";
 import { statusSettleMotion } from "@/lib/motion";
+import { getAttachmentFilenameFromLabel, getAttachmentResourceId } from "@/lib/attachment-links";
 
 const SUPPORTED_PASTE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"]);
 const MOBILE_EDITOR_QUERY = "(max-width: 639px)";
@@ -147,6 +168,184 @@ const IconTooltip = ({ label, children }: { label: string; children: ReactNode }
     </Tooltip>
   </TooltipProvider>
 );
+
+type NoteLinkHintPosition = {
+  left: number;
+  top: number;
+  placement: "above" | "below" | "inside-bottom-right";
+};
+
+type AttachmentMenuTarget = {
+  kind: "attachment";
+  url: string;
+  filename: string;
+  resourceId: string | null;
+  position: NoteLinkHintPosition;
+};
+
+type ImageMenuTarget = {
+  kind: "image";
+  url: string;
+  filename: string;
+  resourceId: string | null;
+  position: NoteLinkHintPosition;
+  updateAttributes: (attributes: Record<string, unknown>) => void;
+  deleteNode: () => void;
+};
+
+type ResourceMenuTarget = AttachmentMenuTarget | ImageMenuTarget;
+
+type ResourceDialogState = {
+  action: "rename" | "delete";
+  target: ResourceMenuTarget;
+};
+
+type ImageMenuRequestDetail = Omit<ImageMenuTarget, "kind" | "position"> & {
+  element: HTMLElement;
+};
+
+const IMAGE_MENU_SHOW_EVENT = "edgeever:image-menu-show";
+const IMAGE_MENU_HIDE_EVENT = "edgeever:image-menu-hide";
+
+const getAttachmentLinkFromEventTarget = (target: EventTarget | null) =>
+  target instanceof Element
+    ? target.closest<HTMLAnchorElement>(
+        'a.edgeever-attachment-link, a[href*="/api/v1/resources/"], a[href^="edgeever-resource://"]'
+      )
+    : null;
+
+const getNoteLinkFromEventTarget = (target: EventTarget | null) =>
+  target instanceof Element
+    ? target.closest<HTMLAnchorElement>('a.edgeever-note-link, a[href^="#memo="]')
+    : null;
+
+const getNoteLinkHintPosition = (link: HTMLAnchorElement): NoteLinkHintPosition => {
+  const rect = link.getBoundingClientRect();
+  const placement = rect.top < 48 ? "below" : "above";
+
+  return {
+    left: Math.min(Math.max(rect.left + rect.width / 2, 12), window.innerWidth - 12),
+    top: placement === "above" ? rect.top - 8 : rect.bottom + 8,
+    placement,
+  };
+};
+
+const NoteLinkInteractionHint = ({
+  label,
+  position,
+}: {
+  label: string;
+  position: NoteLinkHintPosition;
+}) => createPortal(
+  <div
+    role="tooltip"
+    className="pointer-events-none fixed z-[100] whitespace-nowrap rounded-md bg-slate-950 px-2.5 py-1.5 text-xs font-medium text-white shadow-md"
+    style={{
+      left: position.left,
+      top: position.top,
+      transform: position.placement === "above" ? "translate(-50%, -100%)" : "translateX(-50%)",
+    }}
+  >
+    {label}
+  </div>,
+  document.body
+);
+
+const ResourceActionMenu = ({
+  target,
+  canRename,
+  canDelete,
+  labels,
+  onDownload,
+  onSaveAs,
+  onRename,
+  onDelete,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  target: ResourceMenuTarget;
+  canRename: boolean;
+  canDelete: boolean;
+  labels: { download: string; saveAs: string; rename: string; delete: string; unavailable: string };
+  onDownload: () => void;
+  onSaveAs: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+}) => createPortal(
+  <div
+    data-edgeever-resource-menu
+    role="toolbar"
+    aria-label={labels.download}
+    className="fixed z-[110] flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
+    style={{
+      left: target.position.left,
+      top: target.position.top,
+      transform: target.position.placement === "inside-bottom-right"
+        ? "translate(-100%, -100%)"
+        : target.position.placement === "above"
+          ? "translate(-50%, -100%)"
+          : "translateX(-50%)",
+    }}
+    onMouseEnter={onMouseEnter}
+    onMouseLeave={onMouseLeave}
+  >
+    <Button type="button" size="sm" variant="ghost" title={labels.download} onClick={onDownload}>
+      <FileDown className="h-3.5 w-3.5" />
+      {labels.download}
+    </Button>
+    <Button type="button" size="sm" variant="ghost" title={labels.saveAs} onClick={onSaveAs}>
+      <Save className="h-3.5 w-3.5" />
+      {labels.saveAs}
+    </Button>
+    <Button
+      type="button"
+      size="sm"
+      variant="ghost"
+      title={canRename ? labels.rename : labels.unavailable}
+      disabled={!canRename}
+      onClick={onRename}
+    >
+      <Pencil className="h-3.5 w-3.5" />
+      {labels.rename}
+    </Button>
+    <Button
+      type="button"
+      size="sm"
+      variant="ghost"
+      className="text-slate-600 hover:bg-rose-50 hover:text-rose-600"
+      title={canDelete ? labels.delete : labels.unavailable}
+      disabled={!canDelete}
+      onClick={onDelete}
+    >
+      <Trash2 className="h-3.5 w-3.5" />
+      {labels.delete}
+    </Button>
+  </div>,
+  document.body
+);
+
+const findAttachmentLinkRange = (
+  editor: Editor,
+  href: string
+): { from: number; to: number; marks: readonly Mark[] } | null => {
+  let from: number | null = null;
+  let to: number | null = null;
+  let marks: readonly Mark[] = [];
+
+  editor.state.doc.descendants((node, pos) => {
+    if (!node.isText || !node.text) return;
+    const linkMark = node.marks.find((mark) => mark.type.name === "link" && mark.attrs.href === href);
+    if (!linkMark) return;
+    from = from === null ? pos : Math.min(from, pos);
+    to = to === null ? pos + node.nodeSize : Math.max(to, pos + node.nodeSize);
+    marks = node.marks;
+  });
+
+  if (from === null || to === null) return null;
+  return { from: from as number, to: to as number, marks };
+};
 
 type NoteSearchMatch = {
   from: number;
@@ -303,7 +502,7 @@ const getResourceFilesFromDataTransfer = (dataTransfer: DataTransfer | null) => 
   return files.filter((file) => file.size > 0);
 };
 
-const ResizableImageNodeView = ({ editor, node, selected, updateAttributes }: NodeViewProps) => {
+const ResizableImageNodeView = ({ editor, node, selected, updateAttributes, deleteNode }: NodeViewProps) => {
   const { t } = useTranslation();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [previewWidth, setPreviewWidth] = useState<number | null>(null);
@@ -313,6 +512,25 @@ const ResizableImageNodeView = ({ editor, node, selected, updateAttributes }: No
   const alt = typeof node.attrs.alt === "string" ? node.attrs.alt : "";
   const title = typeof node.attrs.title === "string" ? node.attrs.title : "";
   const src = typeof node.attrs.src === "string" ? node.attrs.src : "";
+
+  const requestImageMenu = useCallback(() => {
+    const element = wrapperRef.current;
+    if (!element || !src) return;
+    window.dispatchEvent(new CustomEvent<ImageMenuRequestDetail>(IMAGE_MENU_SHOW_EVENT, {
+      detail: {
+        element,
+        url: src,
+        filename: title || alt || getAttachmentResourceId(src) || "image",
+        resourceId: getAttachmentResourceId(src),
+        updateAttributes,
+        deleteNode,
+      },
+    }));
+  }, [alt, deleteNode, src, title, updateAttributes]);
+
+  const hideImageMenu = useCallback(() => {
+    window.dispatchEvent(new CustomEvent(IMAGE_MENU_HIDE_EVENT));
+  }, []);
 
   const updateWidth = useCallback(
     (nextWidth: number) => {
@@ -376,6 +594,12 @@ const ResizableImageNodeView = ({ editor, node, selected, updateAttributes }: No
       className={cn("edgeever-image-node", selected && "is-selected")}
       style={{ width: `${width}%` }}
       data-width={width}
+      onMouseEnter={requestImageMenu}
+      onMouseLeave={hideImageMenu}
+      onContextMenu={(event: ReactMouseEvent<HTMLElement>) => {
+        event.preventDefault();
+        requestImageMenu();
+      }}
     >
       <img
         src={src}
@@ -392,12 +616,11 @@ const ResizableImageNodeView = ({ editor, node, selected, updateAttributes }: No
                 key={preset.width}
                 type="button"
                 className={cn("edgeever-image-preset", width === preset.width && "is-active")}
-                title={t("editor.scaleTo", { percent: preset.width })}
-                aria-label={`${t(preset.labelKey)}，${t("editor.scaleTo", { percent: preset.width })}`}
+                title={t(preset.labelKey)}
+                aria-label={t(preset.labelKey)}
                 onClick={() => updateWidth(preset.width)}
               >
                 <span>{t(preset.labelKey)}</span>
-                <span className="edgeever-image-preset-percent">{preset.width}%</span>
               </button>
             ))}
           </div>
@@ -566,6 +789,8 @@ type EditorPaneProps = {
   onSaveAsTemplate: (memo: MemoDetail, name: string) => Promise<void>;
   searchFocusToken: number;
   replaceFocusToken: number;
+  documentActionRequest?: MemoDocumentActionRequest | null;
+  onDocumentActionConsumed?: (requestId: number) => void;
   selectionActionBar?: ReactNode;
   onOpenMemo?: (memoId: string) => void;
 };
@@ -627,6 +852,8 @@ const RichEditorPane = ({
   onSaveAsTemplate,
   searchFocusToken,
   replaceFocusToken,
+  documentActionRequest,
+  onDocumentActionConsumed,
   selectionActionBar,
   onOpenMemo,
   onRequestMobileNativeEdit,
@@ -638,6 +865,9 @@ const RichEditorPane = ({
   const [title, setTitle] = useState("");
   const [tagsText, setTagsText] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "queued" | "error" | "conflict">("idle");
+  const [saveConflictInfo, setSaveConflictInfo] = useState<MemoSaveConflictInfo | null>(null);
+  const [conflictActionPending, setConflictActionPending] = useState<"adopt" | "copy" | null>(null);
+  const [conflictActionMessage, setConflictActionMessage] = useState<string | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [hydratedEditorMemoId, setHydratedEditorMemoId] = useState<string | null>(null);
   const [dirtyVersion, setDirtyVersion] = useState(0);
@@ -657,6 +887,12 @@ const RichEditorPane = ({
   const [noteSearchIndex, setNoteSearchIndex] = useState(0);
   const [noteLinkPickerOpen, setNoteLinkPickerOpen] = useState(false);
   const [noteLinkQuery, setNoteLinkQuery] = useState("");
+  const [noteLinkHintPosition, setNoteLinkHintPosition] = useState<NoteLinkHintPosition | null>(null);
+  const [resourceMenuTarget, setResourceMenuTarget] = useState<ResourceMenuTarget | null>(null);
+  const [resourceDialog, setResourceDialog] = useState<ResourceDialogState | null>(null);
+  const [resourceFilename, setResourceFilename] = useState("");
+  const [resourceActionPending, setResourceActionPending] = useState(false);
+  const [resourceActionError, setResourceActionError] = useState<string | null>(null);
   const [isMobileViewport, setIsMobileViewport] = useState(() =>
     typeof window === "undefined" ? false : window.matchMedia(MOBILE_EDITOR_QUERY).matches
   );
@@ -670,6 +906,10 @@ const RichEditorPane = ({
   const [mobileImeDebugActiveElement, setMobileImeDebugActiveElement] = useState(getActiveElementLabel);
   const [mobileImeDebugEvents, setMobileImeDebugEvents] = useState<MobileImeDebugEntry[]>([]);
   const [wechatCopyState, setWechatCopyState] = useState<"idle" | "copying" | "copied" | "error">("idle");
+  const noteLinkModifier = useMemo(
+    () => typeof navigator !== "undefined" && /mac|iphone|ipad|ipod/i.test(navigator.platform) ? "⌘" : "Ctrl",
+    []
+  );
   const noteLinkResultsQuery = useQuery({
     queryKey: ["memo-link-search", noteLinkQuery],
     queryFn: () => repository.listMemos({ q: noteLinkQuery, limit: 20 }),
@@ -682,6 +922,18 @@ const RichEditorPane = ({
   }, []);
   const notebookOptions = useMemo(() => getNotebookMoveOptions(notebooks), [notebooks]);
   const readOnly = isTrashView || Boolean(memo?.isDeleted);
+  const shareMemoId = memo && !readOnly && !isLocalMemoId(memo.id) ? memo.id : null;
+  const shareStatusQuery = useQuery({
+    queryKey: memoShareQueryKey(shareMemoId ?? ""),
+    queryFn: () => {
+      if (!shareMemoId) throw new Error("Memo share query requires a memo id");
+      return api.getMemoShare(shareMemoId);
+    },
+    enabled: Boolean(shareMemoId),
+    retry: false,
+    staleTime: 30_000,
+  });
+  const isMemoShared = Boolean(shareStatusQuery.data?.share);
   const mobileDefaultEditRequested = Boolean(memo?.id && memo.id === mobileDefaultEditMemoId && !readOnly);
   const mobileEditingActive = isMobileEditing || mobileDefaultEditRequested;
 
@@ -716,9 +968,12 @@ const RichEditorPane = ({
   const noteReplaceInputRef = useRef<HTMLInputElement | null>(null);
   const hydratingRef = useRef(false);
   const hydratedMemoIdRef = useRef<string | null>(null);
+  /** Last content source applied to the editor — used to skip redundant setContent. */
+  const appliedEditorSourceKeyRef = useRef<string | null>(null);
   const hasUnsavedChangesRef = useRef(false);
   const editingMemoIdRef = useRef<string | null>(memo?.id ?? null);
   const imageCompressionEnabledRef = useRef(imageCompressionEnabled);
+  const resourceMenuHideTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const handleMemoIdRemapped = (event: Event) => {
@@ -1046,6 +1301,157 @@ const RichEditorPane = ({
     setNoteLinkPickerOpen(false);
     setNoteLinkQuery("");
   }, [editor, effectiveReadOnly, memo?.id, t]);
+
+  const cancelResourceMenuHide = useCallback(() => {
+    if (resourceMenuHideTimerRef.current !== null) {
+      window.clearTimeout(resourceMenuHideTimerRef.current);
+      resourceMenuHideTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleResourceMenuHide = useCallback(() => {
+    cancelResourceMenuHide();
+    resourceMenuHideTimerRef.current = window.setTimeout(() => {
+      resourceMenuHideTimerRef.current = null;
+      setResourceMenuTarget(null);
+    }, 160);
+  }, [cancelResourceMenuHide]);
+
+  useEffect(() => {
+    const showImageMenu = (event: Event) => {
+      if (isMobileViewport) return;
+      const detail = (event as CustomEvent<ImageMenuRequestDetail>).detail;
+      if (!detail?.element) return;
+      cancelResourceMenuHide();
+      const rect = detail.element.getBoundingClientRect();
+      setResourceMenuTarget({
+        ...detail,
+        kind: "image",
+        position: {
+          left: Math.min(Math.max(rect.right - 8, 12), window.innerWidth - 12),
+          top: Math.min(Math.max(rect.bottom - 8, 12), window.innerHeight - 12),
+          placement: "inside-bottom-right",
+        },
+      });
+    };
+    const hideImageMenu = () => scheduleResourceMenuHide();
+    window.addEventListener(IMAGE_MENU_SHOW_EVENT, showImageMenu);
+    window.addEventListener(IMAGE_MENU_HIDE_EVENT, hideImageMenu);
+    return () => {
+      window.removeEventListener(IMAGE_MENU_SHOW_EVENT, showImageMenu);
+      window.removeEventListener(IMAGE_MENU_HIDE_EVENT, hideImageMenu);
+    };
+  }, [cancelResourceMenuHide, isMobileViewport, scheduleResourceMenuHide]);
+
+  const showAttachmentMenu = useCallback((target: EventTarget | null) => {
+    if (isMobileViewport) return false;
+    const link = getAttachmentLinkFromEventTarget(target);
+    if (!link) return false;
+
+    const href = link.getAttribute("href") || "";
+    cancelResourceMenuHide();
+    setNoteLinkHintPosition(null);
+    setResourceMenuTarget({
+      kind: "attachment",
+      url: href,
+      filename: getAttachmentFilenameFromLabel(link.textContent || "") || getAttachmentResourceId(href) || "attachment",
+      resourceId: getAttachmentResourceId(href),
+      position: getNoteLinkHintPosition(link),
+    });
+    return true;
+  }, [cancelResourceMenuHide, isMobileViewport]);
+
+  const showNoteLinkHint = useCallback((target: EventTarget | null) => {
+    if (!editor?.isEditable || isMobileViewport) {
+      return;
+    }
+
+    const link = getNoteLinkFromEventTarget(target);
+    if (link) {
+      setNoteLinkHintPosition(getNoteLinkHintPosition(link));
+    }
+  }, [editor?.isEditable, isMobileViewport]);
+
+  const handleEditorMouseOver = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (showAttachmentMenu(event.target)) return;
+    showNoteLinkHint(event.target);
+  }, [showAttachmentMenu, showNoteLinkHint]);
+
+  const handleEditorMouseOut = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const attachmentLink = getAttachmentLinkFromEventTarget(event.target);
+    if (attachmentLink) {
+      const relatedTarget = event.relatedTarget;
+      if (
+        relatedTarget instanceof Node &&
+        (attachmentLink.contains(relatedTarget) ||
+          (relatedTarget instanceof Element && relatedTarget.closest("[data-edgeever-resource-menu]")))
+      ) {
+        return;
+      }
+      scheduleResourceMenuHide();
+      return;
+    }
+
+    const link = getNoteLinkFromEventTarget(event.target);
+    if (!link || (event.relatedTarget instanceof Node && link.contains(event.relatedTarget))) {
+      return;
+    }
+    setNoteLinkHintPosition(null);
+  }, [scheduleResourceMenuHide]);
+
+  const handleEditorClickCapture = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.button === 0 && !event.ctrlKey && !event.metaKey) {
+      showNoteLinkHint(event.target);
+    }
+  }, [showNoteLinkHint]);
+
+  const handleEditorFocusCapture = useCallback((event: ReactFocusEvent<HTMLDivElement>) => {
+    if (showAttachmentMenu(event.target)) return;
+    showNoteLinkHint(event.target);
+  }, [showAttachmentMenu, showNoteLinkHint]);
+
+  const handleEditorBlurCapture = useCallback((event: ReactFocusEvent<HTMLDivElement>) => {
+    if (!getNoteLinkFromEventTarget(event.relatedTarget)) {
+      setNoteLinkHintPosition(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!noteLinkHintPosition) {
+      return;
+    }
+
+    const hideHint = () => setNoteLinkHintPosition(null);
+    window.addEventListener("resize", hideHint);
+    window.addEventListener("scroll", hideHint, true);
+    return () => {
+      window.removeEventListener("resize", hideHint);
+      window.removeEventListener("scroll", hideHint, true);
+    };
+  }, [noteLinkHintPosition]);
+
+  useEffect(() => {
+    if (!resourceMenuTarget) return;
+    const hideMenu = () => setResourceMenuTarget(null);
+    window.addEventListener("resize", hideMenu);
+    window.addEventListener("scroll", hideMenu, true);
+    return () => {
+      window.removeEventListener("resize", hideMenu);
+      window.removeEventListener("scroll", hideMenu, true);
+    };
+  }, [resourceMenuTarget]);
+
+  useEffect(() => {
+    setNoteLinkHintPosition(null);
+    setResourceMenuTarget(null);
+    setResourceDialog(null);
+  }, [memo?.id, isMarkdownMode]);
+
+  useEffect(() => () => {
+    if (resourceMenuHideTimerRef.current !== null) {
+      window.clearTimeout(resourceMenuHideTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     imageCompressionEnabledRef.current = imageCompressionEnabled;
@@ -1429,6 +1835,7 @@ const RichEditorPane = ({
       memoRef.current = null;
       editSessionRef.current = null;
       hydratedMemoIdRef.current = null;
+      appliedEditorSourceKeyRef.current = null;
       setHydratedEditorMemoId(null);
       editingMemoIdRef.current = null;
       hasUnsavedChangesRef.current = false;
@@ -1446,25 +1853,72 @@ const RichEditorPane = ({
       return;
     }
 
+    const previousMemo = memoRef.current;
     const sameMemo = editingMemoIdRef.current === memo.id;
-    memoRef.current = memo;
 
     if (!sameMemo) {
       hydratedMemoIdRef.current = null;
+      appliedEditorSourceKeyRef.current = null;
       setHydratedEditorMemoId(null);
     }
 
+    // While the user still has unsaved keystrokes, ignore memo prop churn entirely
+    // unless the incoming snapshot is strictly fresher (e.g. another device).
     if (sameMemo && hasUnsavedChangesRef.current && !memo.isDeleted) {
+      if (previousMemo && shouldAcceptRemoteMemoDetail(previousMemo, memo)) {
+        memoRef.current = memo;
+      }
       return;
     }
 
+    // After local autosave clears dirty, reject stale remote props that would
+    // call setContent and roll the document back (cursor jump / deleted text returns).
+    if (
+      sameMemo &&
+      !memo.isDeleted &&
+      previousMemo &&
+      previousMemo.id === memo.id &&
+      !shouldAcceptRemoteMemoDetail(previousMemo, memo)
+    ) {
+      return;
+    }
+
+    // Same memo already on screen and the query only re-emitted an equivalent
+    // snapshot (common when switching away/back triggers a detail refetch).
+    // Refresh the edit session quietly — never touch document or selection.
+    if (
+      sameMemo &&
+      !memo.isDeleted &&
+      hydratedMemoIdRef.current === memo.id &&
+      previousMemo &&
+      previousMemo.id === memo.id &&
+      previousMemo.revision === memo.revision &&
+      previousMemo.updatedAt === memo.updatedAt &&
+      previousMemo.contentHash === memo.contentHash &&
+      previousMemo.title === memo.title &&
+      previousMemo.tags.length === memo.tags.length &&
+      previousMemo.tags.every((tag, index) => tag === memo.tags[index])
+    ) {
+      memoRef.current = memo;
+      if (!requiresLocalEditSession(memo)) {
+        void api.createMemoEditSession(memo.id).then((response) => {
+          if (cancelled || editingMemoIdRef.current !== memo.id) return;
+          editSessionRef.current = response.editSession;
+        }).catch(() => {
+          // Keep the previous session; the next save can open a new one.
+        });
+      }
+      return;
+    }
+
+    memoRef.current = memo;
+
     void (async () => {
-      let [draft, queuedUpdate, editSessionResponse] = memo.isDeleted
-        ? [null, null, null]
+      let [draft, queuedUpdate] = memo.isDeleted
+        ? [null, null]
         : await Promise.all([
             localDb.drafts.get(memo.id),
             localDb.syncQueue.get(getMemoUpdateQueueId(memo.id)),
-            requiresLocalEditSession(memo) ? Promise.resolve(null) : api.createMemoEditSession(memo.id),
           ]);
 
       if (cancelled) {
@@ -1483,19 +1937,89 @@ const RichEditorPane = ({
       const draftUpdatedAt = draft ? Date.parse(draft.updatedAt) : 0;
       const remoteUpdatedAt = Date.parse(memo.updatedAt);
       const useDraft = Boolean(draft && (queuedUpdate || draftUpdatedAt >= remoteUpdatedAt));
-      const nextTitle = useDraft && draft ? draft.title : getEditableMemoTitle(memo.title);
-      const nextTagsText = useDraft && draft ? draft.tagsText : memo.tags.join(", ");
+      const queuedPayload =
+        queuedUpdate && queuedUpdate.kind === "memo.update"
+          ? (queuedUpdate.payload as MemoUpdateSyncPayload)
+          : null;
+      // Prefer an unpushed local queue payload over a stale memo prop when the
+      // draft was already cleared by a successful local save.
+      const useQueuedPayload = Boolean(queuedPayload && !useDraft && !isMemoUpdateAlreadyApplied(memo, queuedUpdate!));
+
+      const nextTitle = useDraft && draft
+        ? draft.title
+        : useQueuedPayload && queuedPayload
+          ? getEditableMemoTitle(queuedPayload.title)
+          : getEditableMemoTitle(memo.title);
+      const nextTagsText = useDraft && draft
+        ? draft.tagsText
+        : useQueuedPayload && queuedPayload
+          ? queuedPayload.tags.join(", ")
+          : memo.tags.join(", ");
       const nextContent = useDraft && draft
         ? draft.contentJson
-        : resolveMemoContentDoc(memo.contentJson, memo.contentMarkdown);
+        : useQueuedPayload && queuedPayload
+          ? queuedPayload.contentJson
+          : resolveMemoContentDoc(memo.contentJson, memo.contentMarkdown);
       const nextMarkdown = docToMarkdown(nextContent);
       const nextHasUnsavedChanges = Boolean(useDraft && !queuedUpdate);
+      const sourceKey = useDraft && draft
+        ? `draft:${memo.id}:${draft.updatedAt}:${nextTitle}:${nextTagsText}:${nextMarkdown}`
+        : useQueuedPayload && queuedUpdate
+          ? `queue:${memo.id}:${queuedUpdate.updatedAt}:${nextTitle}:${nextTagsText}:${nextMarkdown}`
+          : `memo:${memo.id}:${memo.revision}:${memo.updatedAt}:${memo.contentHash}:${nextTitle}:${nextTagsText}:${nextMarkdown}`;
+
+      const alreadyHydratedSameMemo = sameMemo && hydratedMemoIdRef.current === memo.id;
+      const editorMarkdownMatches = Boolean(
+        alreadyHydratedSameMemo &&
+        isEditorReady(currentEditor) &&
+        docToMarkdown(currentEditor.getJSON() as TiptapDoc) === nextMarkdown &&
+        title === nextTitle &&
+        tagsText === nextTagsText
+      );
+      const sourceAlreadyApplied = alreadyHydratedSameMemo && appliedEditorSourceKeyRef.current === sourceKey;
+
+      // Skip a full document replace when content already matches — setContent
+      // always resets the selection and feels like a line jump / jump-to-end.
+      if (sourceAlreadyApplied || editorMarkdownMatches) {
+        editingMemoIdRef.current = memo.id;
+        appliedEditorSourceKeyRef.current = sourceKey;
+        if (queuedUpdate) {
+          const nextState = syncStatusToSaveState(queuedUpdate.status);
+          setSaveState(nextState);
+          setSaveConflictInfo(nextState === "conflict" ? getMemoSaveConflictInfoFromQueueItem(queuedUpdate) : null);
+        }
+        if (requiresLocalEditSession(memo)) {
+          editSessionRef.current = editSessionRef.current ?? createLocalEditSession(memo);
+        } else {
+          void api.createMemoEditSession(memo.id).then((response) => {
+            if (cancelled || editingMemoIdRef.current !== memo.id) return;
+            editSessionRef.current = response.editSession;
+          }).catch(() => {
+            // Keep any previous session for this memo.
+          });
+        }
+        return;
+      }
+
+      const previousSelection = alreadyHydratedSameMemo && isEditorReady(currentEditor)
+        ? {
+            from: currentEditor.state.selection.from,
+            to: currentEditor.state.selection.to,
+          }
+        : null;
 
       hydratingRef.current = true;
       editingMemoIdRef.current = memo.id;
       hasUnsavedChangesRef.current = nextHasUnsavedChanges;
       setHasUnsavedChanges(nextHasUnsavedChanges);
-      setSaveState(queuedUpdate ? syncStatusToSaveState(queuedUpdate.status) : "idle");
+      if (queuedUpdate) {
+        const nextState = syncStatusToSaveState(queuedUpdate.status);
+        setSaveState(nextState);
+        setSaveConflictInfo(nextState === "conflict" ? getMemoSaveConflictInfoFromQueueItem(queuedUpdate) : null);
+      } else {
+        setSaveState("idle");
+        setSaveConflictInfo(null);
+      }
       setTitle(nextTitle);
       setTagsText(nextTagsText);
       setMobilePlainText(nextMarkdown);
@@ -1509,11 +2033,33 @@ const RichEditorPane = ({
           console.error("Failed to set TipTap contentJson, falling back to markdownToDoc:", err);
           currentEditor.commands.setContent(markdownToDoc(nextMarkdown));
         }
+
+        // Re-applying content on an already-open note (e.g. draft vs server)
+        // must not yank the caret to the document end.
+        if (previousSelection) {
+          const maxPos = currentEditor.state.doc.content.size;
+          const from = Math.max(1, Math.min(previousSelection.from, maxPos));
+          const to = Math.max(1, Math.min(previousSelection.to, maxPos));
+          currentEditor.commands.setTextSelection({ from, to });
+        }
       }
 
+      appliedEditorSourceKeyRef.current = sourceKey;
       hydratedMemoIdRef.current = memo.id;
-      editSessionRef.current = editSessionResponse?.editSession ?? (requiresLocalEditSession(memo) ? createLocalEditSession(memo) : null);
       setHydratedEditorMemoId(memo.id);
+
+      if (requiresLocalEditSession(memo)) {
+        editSessionRef.current = createLocalEditSession(memo);
+      } else {
+        // Do not block first paint / caret on the edit-session network round-trip.
+        void api.createMemoEditSession(memo.id).then((response) => {
+          if (cancelled || editingMemoIdRef.current !== memo.id) return;
+          editSessionRef.current = response.editSession;
+        }).catch(() => {
+          if (cancelled || editingMemoIdRef.current !== memo.id) return;
+          editSessionRef.current = createLocalEditSession(memo);
+        });
+      }
 
       window.setTimeout(() => {
         hydratingRef.current = false;
@@ -1523,6 +2069,9 @@ const RichEditorPane = ({
     return () => {
       cancelled = true;
     };
+    // title/tagsText are read only for same-content skip detection; re-running on
+    // every keystroke would re-hydrate the editor while the user is typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
   }, [isTrashView, memo, editor]);
 
   useEffect(() => {
@@ -1572,11 +2121,30 @@ const RichEditorPane = ({
   useEffect(() => {
     const handleSyncCompleted = (event: Event) => {
       const result = (event as CustomEvent<{ failed?: number; conflicted?: number }>).detail;
-      if ((result?.failed ?? 0) > 0 || (result?.conflicted ?? 0) > 0 || hasUnsavedChangesRef.current) {
+      const memoId = memoRef.current?.id;
+
+      if (memoId && (result?.conflicted ?? 0) > 0) {
+        void localDb.syncQueue.get(getMemoUpdateQueueId(memoId)).then((item) => {
+          if (!item || item.status !== "conflict" || memoRef.current?.id !== memoId) {
+            return;
+          }
+          setSaveState("conflict");
+          setSaveConflictInfo(getMemoSaveConflictInfoFromQueueItem(item));
+        });
         return;
       }
 
-      setSaveState((current) => current === "queued" ? "saved" : current);
+      if ((result?.failed ?? 0) > 0 || hasUnsavedChangesRef.current) {
+        return;
+      }
+
+      setSaveState((current) => {
+        if (current !== "queued") {
+          return current;
+        }
+        setSaveConflictInfo(null);
+        return "saved";
+      });
     };
 
     window.addEventListener("edgeever:sync-completed", handleSyncCompleted);
@@ -1627,8 +2195,13 @@ const RichEditorPane = ({
     }
   }, [editor, markdownSource, useMarkdownSourceEditor]);
 
-  const handleExportPdf = useCallback(() => {
+  const handleExportPdf = useCallback((preopenedWindow?: Window | null) => {
     if (!isEditorReady(editor) || !memo) {
+      return;
+    }
+
+    if (preopenedWindow === null) {
+      window.alert(t("editor.pdfExport.popupBlocked"));
       return;
     }
 
@@ -1638,22 +2211,25 @@ const RichEditorPane = ({
         ? markdownToDoc(markdownSource)
         : editor.getJSON() as TiptapDoc;
     const html = serializeNoteDocumentForPrint(editor, currentDocument);
-    const opened = openNotePrintPreview({
-      title: title.trim() || t("common.untitledMemo"),
-      notebook: notebookOptions.find((notebook) => notebook.id === memo.notebookId)?.name ?? "",
-      tags: parseTagsText(tagsText),
-      updatedAt: formatDateTime(memo.updatedAt),
-      html,
-      language: i18n.resolvedLanguage ?? i18n.language,
-      labels: {
-        close: t("editor.pdfExport.close"),
-        error: t("editor.pdfExport.error"),
-        hint: t("editor.pdfExport.hint"),
-        preparing: t("editor.pdfExport.preparing"),
-        print: t("editor.pdfExport.print"),
-        ready: t("editor.pdfExport.ready"),
+    const opened = openNotePrintPreview(
+      {
+        title: title.trim() || t("common.untitledMemo"),
+        notebook: notebookOptions.find((notebook) => notebook.id === memo.notebookId)?.name ?? "",
+        tags: parseTagsText(tagsText),
+        updatedAt: formatDateTime(memo.updatedAt),
+        html,
+        language: i18n.resolvedLanguage ?? i18n.language,
+        labels: {
+          close: t("editor.pdfExport.close"),
+          error: t("editor.pdfExport.error"),
+          hint: t("editor.pdfExport.hint"),
+          preparing: t("editor.pdfExport.preparing"),
+          print: t("editor.pdfExport.print"),
+          ready: t("editor.pdfExport.ready"),
+        },
       },
-    });
+      preopenedWindow ?? undefined,
+    );
 
     if (!opened) {
       window.alert(t("editor.pdfExport.popupBlocked"));
@@ -1697,6 +2273,68 @@ const RichEditorPane = ({
     title,
     useMarkdownSourceEditor,
     useMobilePlainTextEditor,
+  ]);
+
+  const handleSaveAsTemplate = useCallback(() => {
+    if (!memo) {
+      return;
+    }
+
+    const name = window.prompt(t("templates.templateNamePrompt"), memo.title || "");
+    if (!name?.trim()) {
+      return;
+    }
+
+    const currentMarkdown = useMobilePlainTextEditor
+      ? getMobilePlainTextValue()
+      : isEditorReady(editor)
+        ? docToMarkdown(editor.getJSON() as TiptapDoc)
+        : memo.contentMarkdown;
+    const currentTemplateMemo: MemoDetail = {
+      ...memo,
+      title,
+      tags: parseTagsText(tagsText),
+      contentJson: markdownToDoc(currentMarkdown),
+      contentMarkdown: currentMarkdown,
+    };
+    void onSaveAsTemplate(currentTemplateMemo, name.trim());
+  }, [editor, getMobilePlainTextValue, memo, onSaveAsTemplate, t, tagsText, title, useMobilePlainTextEditor]);
+
+  useEffect(() => {
+    if (
+      !documentActionRequest ||
+      documentActionRequest.memoId !== memo?.id ||
+      hydratedEditorMemoId !== memo.id ||
+      !isEditorReady(editor)
+    ) {
+      return;
+    }
+
+    onDocumentActionConsumed?.(documentActionRequest.id);
+
+    switch (documentActionRequest.action) {
+      case "share":
+        setShareOpen(true);
+        break;
+      case "export-markdown":
+        handleExportMarkdown();
+        break;
+      case "export-pdf":
+        handleExportPdf(documentActionRequest.printWindow);
+        break;
+      case "save-as-template":
+        handleSaveAsTemplate();
+        break;
+    }
+  }, [
+    documentActionRequest,
+    editor,
+    handleExportMarkdown,
+    handleExportPdf,
+    handleSaveAsTemplate,
+    hydratedEditorMemoId,
+    memo,
+    onDocumentActionConsumed,
   ]);
 
   useEffect(() => {
@@ -1788,6 +2426,7 @@ const RichEditorPane = ({
         hasUnsavedChangesRef.current = false;
         setHasUnsavedChanges(false);
         await localDb.drafts.delete(savedMemo.id);
+        setSaveConflictInfo(null);
         setSaveState(queued ? "queued" : "saved");
         if (!queued) {
           window.setTimeout(() => setSaveState("idle"), 1400);
@@ -1798,16 +2437,15 @@ const RichEditorPane = ({
       persistCurrentDraft();
       hasUnsavedChangesRef.current = true;
       setHasUnsavedChanges(true);
+      setSaveConflictInfo(null);
       setSaveState("idle");
     },
     onError: async (error) => {
       const sourceError = error instanceof MemoSaveRequestError ? error.originalError : error;
-      const code =
-        sourceError && typeof sourceError === "object" && "code" in sourceError
-          ? String(sourceError.code)
-          : null;
+      const conflictInfo = getMemoSaveConflictInfo(sourceError);
 
-      if (code === "revision_conflict") {
+      if (conflictInfo) {
+        setSaveConflictInfo(conflictInfo);
         setSaveState("conflict");
         return;
       }
@@ -1824,13 +2462,170 @@ const RichEditorPane = ({
 
         hasUnsavedChangesRef.current = false;
         setHasUnsavedChanges(false);
+        setSaveConflictInfo(null);
         setSaveState("queued");
         return;
       }
 
+      setSaveConflictInfo(null);
       setSaveState("error");
     },
   });
+
+  const replaceAttachmentLabel = useCallback((target: AttachmentMenuTarget, filename: string) => {
+    const activeEditor = editorRef.current;
+    if (!isEditorReady(activeEditor)) return;
+    const range = findAttachmentLinkRange(activeEditor, target.url);
+    if (!range) return;
+    activeEditor.view.dispatch(
+      activeEditor.state.tr.replaceWith(
+        range.from,
+        range.to,
+        activeEditor.schema.text(t("editor.attachmentLabel", { filename }), [...range.marks])
+      )
+    );
+  }, [t]);
+
+  const removeAttachmentLink = useCallback((target: AttachmentMenuTarget) => {
+    const activeEditor = editorRef.current;
+    if (!isEditorReady(activeEditor)) return;
+    const range = findAttachmentLinkRange(activeEditor, target.url);
+    if (!range) return;
+
+    const resolved = activeEditor.state.doc.resolve(range.from);
+    let deleteFrom = range.from;
+    let deleteTo = range.to;
+    for (let depth = resolved.depth; depth > 0; depth -= 1) {
+      const node = resolved.node(depth);
+      if (node.type.name !== "paragraph") continue;
+      const nodeFrom = resolved.before(depth);
+      if (range.from === nodeFrom + 1 && range.to === nodeFrom + node.nodeSize - 1) {
+        deleteFrom = nodeFrom;
+        deleteTo = nodeFrom + node.nodeSize;
+      }
+      break;
+    }
+
+    activeEditor.view.dispatch(activeEditor.state.tr.delete(deleteFrom, deleteTo));
+  }, []);
+
+  const getResourceActionFailure = useCallback((target: ResourceMenuTarget) =>
+    target.kind === "image" ? t("editor.imageActions.failed") : t("editor.attachmentActions.failed"), [t]);
+
+  const fetchResourceBlob = useCallback(async (target: ResourceMenuTarget) => {
+    try {
+      return await api.getResourceBlob(target.url);
+    } catch (error) {
+      if (target.resourceId) throw error;
+      const response = await fetch(target.url);
+      if (!response.ok) throw new Error(response.statusText || getResourceActionFailure(target));
+      return response.blob();
+    }
+  }, [getResourceActionFailure]);
+
+  const downloadBlob = useCallback((blob: Blob, filename: string) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }, []);
+
+  const handleResourceDownload = useCallback(async (target: ResourceMenuTarget) => {
+    setResourceMenuTarget(null);
+    setResourceActionError(null);
+    try {
+      downloadBlob(await fetchResourceBlob(target), target.filename);
+    } catch (error) {
+      setResourceActionError(error instanceof Error ? error.message : getResourceActionFailure(target));
+    }
+  }, [downloadBlob, fetchResourceBlob, getResourceActionFailure]);
+
+  const handleResourceSaveAs = useCallback(async (target: ResourceMenuTarget) => {
+    setResourceMenuTarget(null);
+    setResourceActionError(null);
+    try {
+      const savePicker = (window as Window & {
+        showSaveFilePicker?: (options: { suggestedName: string }) => Promise<{
+          createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }>;
+        }>;
+      }).showSaveFilePicker;
+
+      if (!savePicker) {
+        downloadBlob(await fetchResourceBlob(target), target.filename);
+        return;
+      }
+
+      const handle = await savePicker.call(window, { suggestedName: target.filename });
+      const blob = await fetchResourceBlob(target);
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setResourceActionError(error instanceof Error ? error.message : getResourceActionFailure(target));
+    }
+  }, [downloadBlob, fetchResourceBlob, getResourceActionFailure]);
+
+  const openResourceDialog = useCallback((action: ResourceDialogState["action"], target: ResourceMenuTarget) => {
+    setResourceMenuTarget(null);
+    setResourceActionError(null);
+    setResourceFilename(target.filename);
+    setResourceDialog({ action, target });
+  }, []);
+
+  const handleResourceRename = useCallback(async () => {
+    const target = resourceDialog?.action === "rename" ? resourceDialog.target : null;
+    const filename = resourceFilename.trim();
+    if (!target?.resourceId || !filename || resourceActionPending) return;
+
+    setResourceActionPending(true);
+    setResourceActionError(null);
+    try {
+      const result = await repository.renameResource(target.resourceId, filename);
+      const nextFilename = result.resource.filename || filename;
+      if (target.kind === "image") {
+        target.updateAttributes({ alt: nextFilename, title: nextFilename });
+      } else {
+        replaceAttachmentLabel(target, nextFilename);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["resources"] });
+      setResourceDialog(null);
+    } catch (error) {
+      setResourceActionError(error instanceof Error ? error.message : getResourceActionFailure(target));
+    } finally {
+      setResourceActionPending(false);
+    }
+  }, [getResourceActionFailure, queryClient, replaceAttachmentLabel, repository, resourceActionPending, resourceDialog, resourceFilename]);
+
+  const handleResourceDelete = useCallback(async () => {
+    const target = resourceDialog?.action === "delete" ? resourceDialog.target : null;
+    if (!target || resourceActionPending) return;
+
+    setResourceActionPending(true);
+    setResourceActionError(null);
+    try {
+      if (target.kind === "image" && target.url.startsWith("edgeever-staged://") && window.edgeeverDesktop) {
+        const stagedUrl = new URL(target.url);
+        const stagedId = decodeURIComponent(stagedUrl.hostname || stagedUrl.pathname.replace(/^\//, ""));
+        if (stagedId) await window.edgeeverDesktop.removeStagedResource(stagedId);
+      } else if (target.resourceId && !target.resourceId.startsWith("local_resource_")) {
+        await repository.deleteResource(target.resourceId);
+        await queryClient.invalidateQueries({ queryKey: ["resources"] });
+      }
+      if (target.kind === "image") {
+        target.deleteNode();
+      } else {
+        removeAttachmentLink(target);
+      }
+      setResourceDialog(null);
+    } catch (error) {
+      setResourceActionError(error instanceof Error ? error.message : getResourceActionFailure(target));
+    } finally {
+      setResourceActionPending(false);
+    }
+  }, [getResourceActionFailure, queryClient, removeAttachmentLink, repository, resourceActionPending, resourceDialog]);
 
   const clearMobileEditorTimers = useCallback(() => {
     if (mobileDraftTimerRef.current !== null) {
@@ -1956,6 +2751,141 @@ const RichEditorPane = ({
 
     return () => window.clearTimeout(timer);
   }, [dirtyVersion, editor, hasUnsavedChanges, memo, saveMutation, saveState, useMobilePlainTextEditor]);
+
+  // Must stay above early returns so hook order never changes across loading/empty/editor states.
+  const saveConflictReason = useMemo(
+    () => (saveState === "conflict" ? formatMemoSaveConflictReason(t, saveConflictInfo) : null),
+    [saveConflictInfo, saveState, t],
+  );
+
+  useEffect(() => {
+    if (saveState !== "conflict") {
+      setConflictActionPending(null);
+      setConflictActionMessage(null);
+    }
+  }, [saveState]);
+
+  const getLocalDraftMarkdown = useCallback(() => {
+    if (useMobilePlainTextEditor) {
+      return getMobilePlainTextValue();
+    }
+    if (useMarkdownSourceEditor) {
+      return markdownSource;
+    }
+    const contentJson = getCurrentContentJson();
+    if (contentJson) {
+      return docToMarkdown(contentJson);
+    }
+    return memo?.contentMarkdown ?? "";
+  }, [
+    getCurrentContentJson,
+    getMobilePlainTextValue,
+    markdownSource,
+    memo?.contentMarkdown,
+    useMarkdownSourceEditor,
+    useMobilePlainTextEditor,
+  ]);
+
+  const handleCopyLocalDraft = useCallback(async () => {
+    if (conflictActionPending) {
+      return;
+    }
+
+    setConflictActionPending("copy");
+    setConflictActionMessage(null);
+    try {
+      const text = formatLocalDraftClipboardText({
+        title,
+        tags: parseTagsText(tagsText),
+        contentMarkdown: getLocalDraftMarkdown(),
+      });
+      const copied = await copyTextToClipboard(text);
+      if (!copied) {
+        setConflictActionMessage(t("editor.saveState.conflictCopyDraftFailed"));
+        return;
+      }
+      setConflictActionMessage(t("editor.saveState.conflictCopyDraftDone"));
+      window.setTimeout(() => {
+        setConflictActionMessage((current) =>
+          current === t("editor.saveState.conflictCopyDraftDone") ? null : current
+        );
+      }, 2000);
+    } catch {
+      setConflictActionMessage(t("editor.saveState.conflictCopyDraftFailed"));
+    } finally {
+      setConflictActionPending(null);
+    }
+  }, [conflictActionPending, getLocalDraftMarkdown, t, tagsText, title]);
+
+  const handleAdoptCloudAndReload = useCallback(async () => {
+    const currentMemo = memoRef.current;
+    if (!currentMemo || conflictActionPending === "adopt") {
+      return;
+    }
+
+    setConflictActionPending("adopt");
+    setConflictActionMessage(null);
+    try {
+      const { memo: remoteMemo } = await repository.adoptCloudMemo(currentMemo.id);
+      await onSaved(remoteMemo);
+
+      hasUnsavedChangesRef.current = false;
+      setHasUnsavedChanges(false);
+      setSaveConflictInfo(null);
+      setSaveState("idle");
+      setConflictActionMessage(null);
+
+      const nextTitle = getEditableMemoTitle(remoteMemo.title);
+      const nextTagsText = remoteMemo.tags.join(", ");
+      const nextContent = resolveMemoContentDoc(remoteMemo.contentJson, remoteMemo.contentMarkdown);
+      const nextMarkdown = remoteMemo.contentMarkdown || docToMarkdown(nextContent);
+
+      memoRef.current = remoteMemo;
+      editSessionRef.current = null;
+      hydratedMemoIdRef.current = remoteMemo.id;
+      setHydratedEditorMemoId(remoteMemo.id);
+      editingMemoIdRef.current = remoteMemo.id;
+      appliedEditorSourceKeyRef.current = `memo:${remoteMemo.id}:${remoteMemo.revision}:${remoteMemo.updatedAt}:${remoteMemo.contentHash}:${nextTitle}:${nextTagsText}:${nextMarkdown}`;
+
+      setTitle(nextTitle);
+      setTagsText(nextTagsText);
+      setMobilePlainText(nextMarkdown);
+      setMarkdownSource(nextMarkdown);
+      setMobilePlainTextElementValue(mobileTextAreaRef.current, nextMarkdown);
+
+      const currentEditor = editorRef.current;
+      if (isEditorReady(currentEditor)) {
+        hydratingRef.current = true;
+        try {
+          currentEditor.commands.setContent(nextContent);
+        } catch (err) {
+          console.error("Failed to apply cloud memo after conflict resolve:", err);
+          currentEditor.commands.setContent(markdownToDoc(nextMarkdown));
+        }
+        window.setTimeout(() => {
+          hydratingRef.current = false;
+        }, 0);
+      }
+
+      if (requiresLocalEditSession(remoteMemo)) {
+        editSessionRef.current = createLocalEditSession(remoteMemo);
+      } else {
+        void api.createMemoEditSession(remoteMemo.id).then((response) => {
+          if (editingMemoIdRef.current !== remoteMemo.id) return;
+          editSessionRef.current = response.editSession;
+        }).catch(() => {
+          if (editingMemoIdRef.current !== remoteMemo.id) return;
+          editSessionRef.current = createLocalEditSession(remoteMemo);
+        });
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["memo", remoteMemo.id] });
+    } catch {
+      setConflictActionMessage(t("editor.saveState.conflictAdoptFailed"));
+    } finally {
+      setConflictActionPending(null);
+    }
+  }, [conflictActionPending, onSaved, queryClient, repository, t]);
 
   if (isSelectionMode) {
     return (
@@ -2182,6 +3112,29 @@ const RichEditorPane = ({
     });
   };
 
+  const resourceMenuLabels = {
+    download: t("editor.resourceActions.download"),
+    saveAs: t("editor.resourceActions.saveAs"),
+    rename: t("editor.resourceActions.rename"),
+    delete: t("editor.resourceActions.delete"),
+    unavailable: t("editor.resourceActions.unavailable"),
+  };
+  const resourceDialogLabels = resourceDialog?.target.kind === "image"
+    ? {
+        renameTitle: t("editor.imageActions.renameTitle"),
+        renameDescription: t("editor.imageActions.renameDescription"),
+        filenameLabel: t("editor.imageActions.filenameLabel"),
+        deleteTitle: t("editor.imageActions.deleteTitle"),
+        deleteDescription: t("editor.imageActions.deleteDescription"),
+      }
+    : {
+        renameTitle: t("editor.attachmentActions.renameTitle"),
+        renameDescription: t("editor.attachmentActions.renameDescription"),
+        filenameLabel: t("editor.attachmentActions.filenameLabel"),
+        deleteTitle: t("editor.attachmentActions.deleteTitle"),
+        deleteDescription: t("editor.attachmentActions.deleteDescription"),
+      };
+
   return (
     <div className="relative flex h-full min-w-0 flex-col bg-white">
       {selectionActionBar}
@@ -2304,6 +3257,18 @@ const RichEditorPane = ({
           </div>
 
           <div className="flex shrink-0 items-center gap-1">
+            {isMemoShared && (
+              <button
+                className="inline-flex h-8 items-center gap-1.5 rounded-full bg-emerald-50 px-2 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200 transition-colors hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                type="button"
+                title={t("sharing.manage")}
+                aria-label={t("sharing.manage")}
+                onClick={() => setShareOpen(true)}
+              >
+                <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="hidden sm:inline">{t("sharing.active")}</span>
+              </button>
+            )}
             <span
               className="hidden whitespace-nowrap px-1.5 text-xs tabular-nums text-slate-400 sm:inline-flex"
               title={t("editor.characterCount", { count: characterCount })}
@@ -2331,6 +3296,8 @@ const RichEditorPane = ({
               className={cn("hidden items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium sm:inline-flex", saveStateClassName)}
               role="status"
               aria-live="polite"
+              title={saveConflictReason ?? undefined}
+              aria-label={saveState === "conflict" && saveConflictReason ? `${saveLabel}. ${saveConflictReason}` : undefined}
               {...statusSettleMotion}
             >
               {saveState === "saving" ? (
@@ -2349,6 +3316,8 @@ const RichEditorPane = ({
               className={cn("inline-flex max-w-[5.5rem] truncate rounded-full px-2 py-1 text-[11px] font-medium sm:hidden", mobileStatusClassName)}
               role="status"
               aria-live="polite"
+              title={saveConflictReason ?? undefined}
+              aria-label={saveState === "conflict" && saveConflictReason ? `${saveLabel}. ${saveConflictReason}` : undefined}
               {...statusSettleMotion}
             >
               {mobileStatusLabel}
@@ -2503,12 +3472,15 @@ const RichEditorPane = ({
                 </DropdownMenuItem>
                 {!readOnly && (
                   <DropdownMenuItem
-                    className="flex h-9 w-full items-center gap-2 px-3 text-left text-sm text-slate-700 hover:bg-slate-50 cursor-pointer outline-none"
+                    className={cn(
+                      "flex h-9 w-full items-center gap-2 px-3 text-left text-sm hover:bg-slate-50 cursor-pointer outline-none",
+                      isMemoShared ? "bg-emerald-50 text-emerald-800" : "text-slate-700",
+                    )}
                     disabled={isLocalMemoId(memo.id)}
                     onClick={() => setShareOpen(true)}
                   >
-                    <Link2 className="h-4 w-4 text-slate-500" />
-                    {t("sharing.action")}
+                    <Link2 className={cn("h-4 w-4", isMemoShared ? "text-emerald-600" : "text-slate-500")} />
+                    {t(isMemoShared ? "sharing.manage" : "sharing.action")}
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem
@@ -2520,7 +3492,7 @@ const RichEditorPane = ({
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="flex h-9 w-full items-center gap-2 px-3 text-left text-sm text-slate-700 hover:bg-slate-50 cursor-pointer outline-none"
-                  onClick={handleExportPdf}
+                  onClick={() => handleExportPdf()}
                 >
                   <Printer className="h-4 w-4 text-slate-500" />
                   {t("editor.exportPdf")}
@@ -2547,24 +3519,7 @@ const RichEditorPane = ({
                   <>
                     <DropdownMenuItem
                       className="flex h-9 w-full items-center gap-2 px-3 text-left text-sm text-slate-700 hover:bg-slate-50 cursor-pointer outline-none"
-                      onClick={() => {
-                        const name = window.prompt(t("templates.templateNamePrompt"), memo.title || "");
-                        if (name?.trim()) {
-                          const currentMarkdown = useMobilePlainTextEditor
-                            ? getMobilePlainTextValue()
-                            : isEditorReady(editor)
-                              ? docToMarkdown(editor.getJSON() as TiptapDoc)
-                              : memo.contentMarkdown;
-                          const currentTemplateMemo: MemoDetail = {
-                            ...memo,
-                            title,
-                            tags: parseTagsText(tagsText),
-                            contentJson: markdownToDoc(currentMarkdown),
-                            contentMarkdown: currentMarkdown,
-                          };
-                          void onSaveAsTemplate(currentTemplateMemo, name.trim());
-                        }
-                      }}
+                      onClick={handleSaveAsTemplate}
                     >
                       <Pencil className="h-4 w-4 text-slate-500" />
                       {t("templates.saveAsTemplate")}
@@ -2741,6 +3696,44 @@ const RichEditorPane = ({
             onPickNoteLink={() => setNoteLinkPickerOpen(true)}
           />
         )}
+        {saveState === "conflict" && saveConflictReason ? (
+          <div
+            className="flex flex-col gap-2 border-t border-rose-100 bg-rose-50 px-3 py-2 text-xs leading-relaxed text-rose-800 sm:px-5"
+            role="alert"
+          >
+            <div className="flex items-start gap-2">
+              <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1">{saveConflictReason}</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 pl-5">
+              <Button
+                size="sm"
+                variant="solid"
+                className="h-7 bg-rose-700 px-2.5 text-[11px] text-white hover:bg-rose-800"
+                disabled={conflictActionPending !== null}
+                onClick={() => void handleAdoptCloudAndReload()}
+              >
+                {conflictActionPending === "adopt"
+                  ? t("editor.saveState.conflictAdopting")
+                  : t("editor.saveState.conflictAdoptCloud")}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2.5 text-[11px] text-rose-800 hover:bg-rose-100"
+                disabled={conflictActionPending !== null}
+                onClick={() => void handleCopyLocalDraft()}
+              >
+                {t("editor.saveState.conflictCopyDraft")}
+              </Button>
+              {conflictActionMessage ? (
+                <span className="text-[11px] font-medium text-rose-700" role="status" aria-live="polite">
+                  {conflictActionMessage}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
       </header>
 
       <div
@@ -2757,6 +3750,7 @@ const RichEditorPane = ({
         style={{
           "--editor-body-font-size": `${MEMO_CONTENT_STYLE.body.fontSize}px`,
           "--editor-body-line-height": String(MEMO_CONTENT_STYLE.body.lineHeight / MEMO_CONTENT_STYLE.body.fontSize),
+          "--editor-paragraph-spacing": `${MEMO_CONTENT_STYLE.body.paragraphSpacing}px`,
           "--memo-content-divider-color": MEMO_CONTENT_STYLE.divider.color[resolvedTheme],
           "--memo-content-divider-spacing": `${MEMO_CONTENT_STYLE.divider.marginVertical}px`,
           ...(editorTheme !== "default" &&
@@ -2858,7 +3852,15 @@ const RichEditorPane = ({
                 placeholder={`# ${t("editor.placeholder")}`}
               />
             ) : (
-              <EditorContent editor={editor} />
+              <div
+                onMouseOver={handleEditorMouseOver}
+                onMouseOut={handleEditorMouseOut}
+                onClickCapture={handleEditorClickCapture}
+                onFocusCapture={handleEditorFocusCapture}
+                onBlurCapture={handleEditorBlurCapture}
+              >
+                <EditorContent editor={editor} />
+              </div>
             )}
           </div>
           {!isMobileViewport && !useMobilePlainTextEditor && !useMarkdownSourceEditor && (
@@ -2871,6 +3873,116 @@ const RichEditorPane = ({
           )}
         </div>
       </div>
+
+      {noteLinkHintPosition && (
+        <NoteLinkInteractionHint
+          label={t("noteLinkPicker.openHint", { modifier: noteLinkModifier })}
+          position={noteLinkHintPosition}
+        />
+      )}
+
+      {resourceMenuTarget && (
+        <ResourceActionMenu
+          target={resourceMenuTarget}
+          canRename={Boolean(
+            resourceMenuTarget.resourceId &&
+            !resourceMenuTarget.resourceId.startsWith("local_resource_") &&
+            editor?.isEditable &&
+            !effectiveReadOnly
+          )}
+          canDelete={Boolean(
+            editor?.isEditable &&
+            !effectiveReadOnly &&
+            (resourceMenuTarget.kind === "image" || (
+              resourceMenuTarget.resourceId && !resourceMenuTarget.resourceId.startsWith("local_resource_")
+            ))
+          )}
+          labels={resourceMenuLabels}
+          onDownload={() => void handleResourceDownload(resourceMenuTarget)}
+          onSaveAs={() => void handleResourceSaveAs(resourceMenuTarget)}
+          onRename={() => openResourceDialog("rename", resourceMenuTarget)}
+          onDelete={() => openResourceDialog("delete", resourceMenuTarget)}
+          onMouseEnter={cancelResourceMenuHide}
+          onMouseLeave={scheduleResourceMenuHide}
+        />
+      )}
+
+      <Dialog
+        open={resourceDialog?.action === "rename"}
+        onOpenChange={(open) => {
+          if (!open && !resourceActionPending) setResourceDialog(null);
+        }}
+      >
+        <DialogContent>
+          <form
+            className="contents"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleResourceRename();
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>{resourceDialogLabels.renameTitle}</DialogTitle>
+              <DialogDescription>{resourceDialogLabels.renameDescription}</DialogDescription>
+            </DialogHeader>
+            <label className="grid gap-2 text-sm font-medium text-slate-700">
+              {resourceDialogLabels.filenameLabel}
+              <Input
+                autoFocus
+                value={resourceFilename}
+                maxLength={160}
+                disabled={resourceActionPending}
+                onChange={(event) => setResourceFilename(event.target.value)}
+              />
+            </label>
+            {resourceActionError && (
+              <p className="text-sm text-rose-600" role="alert">{resourceActionError}</p>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="ghost" disabled={resourceActionPending} onClick={() => setResourceDialog(null)}>
+                {t("common.cancel")}
+              </Button>
+              <Button type="submit" variant="solid" disabled={resourceActionPending || !resourceFilename.trim()}>
+                {resourceActionPending ? t("common.saving") : t("common.save")}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={resourceDialog?.action === "delete"}
+        onOpenChange={(open) => {
+          if (!open && !resourceActionPending) setResourceDialog(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{resourceDialogLabels.deleteTitle}</DialogTitle>
+            <DialogDescription>{resourceDialogLabels.deleteDescription}</DialogDescription>
+          </DialogHeader>
+          <p className="truncate rounded-md bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
+            {resourceDialog?.target.filename}
+          </p>
+          {resourceActionError && (
+            <p className="text-sm text-rose-600" role="alert">{resourceActionError}</p>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="ghost" disabled={resourceActionPending} onClick={() => setResourceDialog(null)}>
+              {t("common.cancel")}
+            </Button>
+            <Button type="button" variant="danger" disabled={resourceActionPending} onClick={() => void handleResourceDelete()}>
+              {resourceActionPending ? t("common.processing") : t("common.delete")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {resourceActionError && !resourceDialog && (
+        <div className="fixed bottom-5 left-1/2 z-[120] -translate-x-1/2 rounded-md bg-rose-600 px-3 py-2 text-sm font-medium text-white shadow-lg" role="alert">
+          {resourceActionError}
+        </div>
+      )}
 
       {false && useMobilePlainTextEditor && (
         <div className="fixed left-2 right-2 top-[max(3.5rem,env(safe-area-inset-top))] z-[70] rounded-md border border-amber-200 bg-amber-50/95 p-2 text-[11px] text-slate-800 shadow-lg backdrop-blur sm:hidden">

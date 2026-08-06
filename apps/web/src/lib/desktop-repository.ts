@@ -162,6 +162,16 @@ export const createDesktopRepository = (): EdgeEverRepository => ({
       throw error;
     }
   },
+  renameResource: async (resourceId, filename) => {
+    const result = await api.renameResource(resourceId, filename);
+    await request("resource.cache", { resource: result.resource });
+    return { resource: { ...result.resource, url: toDesktopResourceUrl(result.resource.url) } };
+  },
+  deleteResource: async (resourceId) => {
+    const result = await api.deleteResource(resourceId);
+    await request("resource.delete", { resourceId });
+    return result;
+  },
   listTags: () => request("tag.list", {}),
   renameTag: (tag, name) => request("tag.rename", { tag, name }).then((result) => {
     window.dispatchEvent(new CustomEvent("edgeever:sync-queue-changed"));
@@ -231,6 +241,12 @@ export const createDesktopRepository = (): EdgeEverRepository => ({
     const result = await request("memo.update", rpcParams);
     notifySyncQueueDeferred();
     return { memo: toDisplayMemo(result.memo), queued: true as const };
+  },
+
+  adoptCloudMemo: async (memoId) => {
+    const { discardDesktopMemoConflict } = await import("@/lib/desktop-sync");
+    const memo = await discardDesktopMemoConflict(memoId);
+    return { memo: toDisplayMemo(memo) };
   },
 
   deleteMemo: (memoId, permanent = false) => request("memo.delete", { memoId, permanent }).then((result) => {

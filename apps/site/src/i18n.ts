@@ -281,8 +281,8 @@ export const siteCopy = {
   "en-US": {
     layout: {
       defaultDescription:
-        "EdgeEver is an open-source, serverless, 100% free notes workspace with a classic three-pane workflow, rich text, nested notebooks, and remote MCP endpoint.",
-      defaultTitle: `EdgeEver - ${siteTaglines["en-US"]}`,
+        "EdgeEver is a free, open-source, self-hosted Evernote alternative with a familiar three-pane workspace, open data, web clipping, sync, and AI agent support.",
+      defaultTitle: "Open-Source, Self-Hosted Evernote Alternative | EdgeEver",
       imageAlt: "EdgeEver notes app screenshot",
       ogLocale: "en_US",
     },

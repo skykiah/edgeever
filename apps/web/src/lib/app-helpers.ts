@@ -22,6 +22,13 @@ export type ShortcutBinding = {
 export type ShortcutSettings = Record<ShortcutAction, ShortcutBinding>;
 export type MobileBottomNavItem = "home" | "search" | "templates" | "settings";
 export type MemoContextMenuState = { memo: MemoSummary; x: number; y: number };
+export type MemoDocumentAction = "share" | "export-markdown" | "export-pdf" | "save-as-template";
+export type MemoDocumentActionRequest = {
+  id: number;
+  memoId: string;
+  action: MemoDocumentAction;
+  printWindow?: Window | null;
+};
 export type MemoSelectionContextMenuState = { x: number; y: number };
 export type NotebookContextMenuState = { notebook: NotebookNode; x: number; y: number };
 export type MemoDeleteConfirmation = { kind: "single" | "bulk"; memoIds: string[]; permanent: boolean };

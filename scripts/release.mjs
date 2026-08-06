@@ -40,6 +40,7 @@ export const RELEASE_VALIDATIONS = [
       "scripts/release.test.mjs",
       "scripts/validate-store-delivery.test.mjs",
       "scripts/store-delivery.test.mjs",
+      "scripts/desktop-icns.test.mjs",
       "apps/web/src/lib/version-check.test.mjs",
       "apps/mobile/src/lib/mobile-release.test.ts",
     ],
@@ -52,9 +53,12 @@ const usage = `Usage:
     --issue-title "Release issue title" \\
     --label bug \\
     --change-en "English user-facing change" \\
-    --change-zh "中文用户更新说明"
+    --change-zh "中文用户更新说明" \\
+    --change-commit "abcdef1"
 
-Repeat --change-en and --change-zh for multiple paired release bullets.
+Repeat --change-en, --change-zh, and --change-commit for multiple paired release bullets.
+Use comma-separated SHAs when one bullet covers multiple commits. Every other
+commit requires --ignore-commit "abcdef1:reason".
 
 Options:
   --bump <level>            Required version bump: patch, minor, or major
@@ -63,6 +67,8 @@ Options:
   --label <label>            Required Issue label; may be repeated
   --change-en <text>         Required English release bullet; may be repeated
   --change-zh <text>         Required Chinese release bullet; may be repeated
+  --change-commit <sha,...>  Commits covered by the corresponding bilingual bullet
+  --ignore-commit <sha:why>  Explicitly exclude a non-user-facing commit; may be repeated
   --skip-install             Do not install the final DMG after publication
   --dry-run                  Print the plan and generated notes without mutations
   --help                     Show this help
@@ -76,6 +82,8 @@ export const parseReleaseArgs = (argv) => {
     labels: [],
     changesEn: [],
     changesZh: [],
+    changeCommits: [],
+    ignoredCommits: [],
     skipInstall: false,
     dryRun: false,
     help: false,
@@ -88,6 +96,8 @@ export const parseReleaseArgs = (argv) => {
     ["--label", "labels"],
     ["--change-en", "changesEn"],
     ["--change-zh", "changesZh"],
+    ["--change-commit", "changeCommits"],
+    ["--ignore-commit", "ignoredCommits"],
   ]);
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -142,7 +152,78 @@ export const parseReleaseArgs = (argv) => {
   if (options.changesEn.length !== options.changesZh.length) {
     throw new Error("--change-en and --change-zh must have the same count.");
   }
+  if (options.changesEn.length !== options.changeCommits.length) {
+    throw new Error("Each bilingual change requires one corresponding --change-commit value.");
+  }
   return options;
+};
+
+const RELEASE_COMMIT_PATTERN = /^chore: release v\d+\.\d+\.\d+ \[skip ci\]$/;
+const COMMIT_REF_PATTERN = /^[0-9a-f]{7,40}$/i;
+
+const parseCommitRefs = (value, option) => {
+  const refs = value.split(",").map((item) => item.trim()).filter(Boolean);
+  if (refs.length === 0 || refs.some((ref) => !COMMIT_REF_PATTERN.test(ref))) {
+    throw new Error(`${option} must contain comma-separated commit SHAs with 7 to 40 hexadecimal characters.`);
+  }
+  return refs;
+};
+
+const resolveCommitRef = (ref, commits, option) => {
+  const matches = commits.filter((commit) => commit.sha.toLowerCase().startsWith(ref.toLowerCase()));
+  if (matches.length === 0) {
+    throw new Error(`${option} references ${ref}, which is not in the release commit range.`);
+  }
+  if (matches.length > 1) {
+    throw new Error(`${option} commit ${ref} is ambiguous; use a longer SHA.`);
+  }
+  return matches[0];
+};
+
+export const auditReleaseCommitCoverage = ({ commits, changeCommits, ignoredCommits }) => {
+  const mappings = changeCommits.map((value, index) => ({
+    changeIndex: index,
+    commits: parseCommitRefs(value, "--change-commit").map((ref) =>
+      resolveCommitRef(ref, commits, "--change-commit")
+    ),
+  }));
+  const coveredShas = new Set(mappings.flatMap((mapping) =>
+    mapping.commits.map((commit) => commit.sha)
+  ));
+  const ignored = ignoredCommits.map((value) => {
+    const separator = value.indexOf(":");
+    const ref = separator === -1 ? "" : value.slice(0, separator).trim();
+    const reason = separator === -1 ? "" : value.slice(separator + 1).trim();
+    if (!COMMIT_REF_PATTERN.test(ref) || !reason) {
+      throw new Error('--ignore-commit must use "<commit-sha>:<reason>".');
+    }
+    const commit = resolveCommitRef(ref, commits, "--ignore-commit");
+    if (coveredShas.has(commit.sha)) {
+      throw new Error(`Commit ${ref} cannot be both covered and ignored.`);
+    }
+    return { commit, reason };
+  });
+  const ignoredShas = new Set(ignored.map(({ commit }) => commit.sha));
+  if (ignoredShas.size !== ignored.length) {
+    throw new Error("A commit may only be ignored once.");
+  }
+
+  const automatic = commits
+    .filter((commit) => RELEASE_COMMIT_PATTERN.test(commit.subject))
+    .map((commit) => ({ commit, reason: "release automation commit" }));
+  const automaticShas = new Set(automatic.map(({ commit }) => commit.sha));
+  const uncovered = commits.filter((commit) =>
+    !coveredShas.has(commit.sha) && !ignoredShas.has(commit.sha) && !automaticShas.has(commit.sha)
+  );
+  if (uncovered.length > 0) {
+    throw new Error([
+      "Release notes do not account for every commit since the previous Release:",
+      ...uncovered.map((commit) => `- ${commit.sha.slice(0, 8)} ${commit.subject}`),
+      'Cover each commit with --change-commit, or use --ignore-commit "<sha>:<reason>".',
+    ].join("\n"));
+  }
+
+  return { mappings, ignored: [...ignored, ...automatic] };
 };
 
 export const nextVersion = (version, bump) => {
@@ -168,7 +249,7 @@ export const buildReleaseTitle = (tag) => {
   return tag;
 };
 
-export const buildIssueBody = ({ changesEn, changesZh }) => [
+export const buildIssueBody = ({ changesEn, changesZh, commitCoverageAudit }) => [
   "## Summary",
   "",
   ...changesEn.map((change) => `- ${change}`),
@@ -177,6 +258,17 @@ export const buildIssueBody = ({ changesEn, changesZh }) => [
   "",
   ...changesZh.map((change) => `- ${change}`),
   "",
+  ...(commitCoverageAudit ? [
+    "## Commit coverage audit",
+    "",
+    ...commitCoverageAudit.mappings.map((mapping) =>
+      `- Change ${mapping.changeIndex + 1}: ${mapping.commits.map((commit) => `\`${commit.sha.slice(0, 8)}\``).join(", ")}`
+    ),
+    ...commitCoverageAudit.ignored.map(({ commit, reason }) =>
+      `- Excluded \`${commit.sha.slice(0, 8)}\`: ${reason}`
+    ),
+    "",
+  ] : []),
   "## Acceptance criteria",
   "",
   "- Required type checks, Web build, and native release planning tests pass.",
@@ -287,6 +379,29 @@ const changedFilesBetween = (baseRef, headRef) => run(
   ["diff", "--name-only", `${baseRef}...${headRef}`],
   { capture: true },
 ).split("\n").filter(Boolean);
+
+const releaseCommitsBetween = (baseRef, headRef) => run(
+  "git",
+  ["log", "--reverse", "--format=%H%x09%s", `${baseRef}..${headRef}`],
+  { capture: true },
+).split("\n").filter(Boolean).map((line) => {
+  const separator = line.indexOf("\t");
+  return {
+    sha: line.slice(0, separator),
+    subject: line.slice(separator + 1),
+  };
+});
+
+const printReleaseCoverageAudit = ({ audit, changesEn }) => {
+  console.log("[release] commit coverage audit:");
+  for (const mapping of audit.mappings) {
+    const commits = mapping.commits.map((commit) => commit.sha.slice(0, 8)).join(", ");
+    console.log(`[release]   change ${mapping.changeIndex + 1} (${commits}): ${changesEn[mapping.changeIndex]}`);
+  }
+  for (const { commit, reason } of audit.ignored) {
+    console.log(`[release]   ignored ${commit.sha.slice(0, 8)}: ${reason}`);
+  }
+};
 
 const assertReleasePreconditions = ({ repository, previousTag }) => {
   if (run("git", ["branch", "--show-current"], { capture: true }) !== "main") {
@@ -673,6 +788,13 @@ const releaseMain = async (options) => {
   if (changedFiles.length === 0) {
     throw new Error(`There are no committed changes after ${previousTag}.`);
   }
+  const releaseCommits = releaseCommitsBetween(previousTag, headShaBeforeRelease);
+  const commitCoverageAudit = auditReleaseCommitCoverage({
+    commits: releaseCommits,
+    changeCommits: options.changeCommits,
+    ignoredCommits: options.ignoredCommits,
+  });
+  printReleaseCoverageAudit({ audit: commitCoverageAudit, changesEn: options.changesEn });
   const desktopPlan = planNativeRelease("desktop", changedFiles);
   const mobilePlan = planNativeRelease("mobile", changedFiles);
 
@@ -711,7 +833,7 @@ const releaseMain = async (options) => {
       options.issueTitle,
       ...options.labels.flatMap((label) => ["--label", label]),
       "--body",
-      buildIssueBody(options),
+      buildIssueBody({ ...options, commitCoverageAudit }),
     ], { capture: true });
     const issueMatch = issueUrl.match(/\/issues\/(\d+)/);
     if (!issueMatch) {

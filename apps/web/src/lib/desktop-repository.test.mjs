@@ -1,7 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 
 let lastRequest = null;
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 
+// Must be installed before importing modules that read `window` at load time.
 globalThis.window = {
   location: { hostname: "notes.example.com", origin: "https://notes.example.com" },
   dispatchEvent: () => true,
@@ -16,6 +18,14 @@ globalThis.window = {
     },
   },
 };
+
+afterAll(() => {
+  if (originalWindow) {
+    Object.defineProperty(globalThis, "window", originalWindow);
+  } else {
+    delete globalThis.window;
+  }
+});
 
 const { createDesktopRepository } = await import("./desktop-repository.ts");
 

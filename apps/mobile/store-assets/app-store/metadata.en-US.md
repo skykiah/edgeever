@@ -61,7 +61,7 @@ notes,notebook,self-hosted,markdown,writing,knowledge,Cloudflare,open source,syn
 
 ### Review notes
 
-EdgeEver is a client for a self-hosted notes service. On the sign-in screen, enter the demo instance URL, username, and password listed above. The public demo resets every Monday at 1:00 AM China Standard Time; please do not store sensitive review content in it.
+EdgeEver is a client for a self-hosted notes service. On the sign-in screen, enter the demo instance URL, username, and password listed above. The public demo resets every day at 3:00 AM China Standard Time; please do not store sensitive review content in it.
 
 The app does not create accounts. Production accounts are created and controlled by the administrator of the self-hosted EdgeEver instance. Notes, attachments, credentials, and sync traffic travel directly between the device and the instance selected by the user; the app developer operates no relay or centralized storage service. Account and server-side data deletion is handled by that instance administrator. Users can sign out to remove the local session and can remove local app data through iOS Settings.
 

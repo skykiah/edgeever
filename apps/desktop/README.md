@@ -20,9 +20,26 @@ bun run dev:desktop
 The sidecar can be overridden for development with
 `EDGE_EVER_SIDECAR_PATH=/absolute/path/to/edgeever-sidecar`.
 
+## App icon (macOS Dock)
+
+Dock tiles need a complete multi-resolution `.icns` (including 1024px). Do not
+point electron-builder at a lone 512 PWA PNG — that produces a thin icon pack
+and macOS can show a blank Dock placeholder forever after installs.
+
+Regenerate committed icon assets after changing the brand mark:
+
+```sh
+bun run prepare:desktop:icons
+```
+
+This writes `apps/desktop/assets/icon.icns` (full ICNS) and `icon.png` (1024
+master). Packaging validation rejects incomplete ICNS types. Runtime also calls
+`app.dock.setIcon` as a Launch Services / Dock cache fallback.
+
 Build an unsigned installer for the current platform with:
 
 ```sh
+bun run prepare:desktop:icons
 bun run build:web
 bun run build:desktop:sidecar
 CSC_IDENTITY_AUTO_DISCOVERY=false bun run --cwd apps/desktop dist -- --publish never

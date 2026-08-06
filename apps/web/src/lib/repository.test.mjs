@@ -9,6 +9,17 @@ const { api } = await import("./api.ts");
 const { createWebRepository } = await import("./repository.ts");
 const { createLocalMemo } = await import("./local-mirror.ts");
 
+const installTestWindow = ({ hostname = "localhost" } = {}) => {
+  const previousWindow = globalThis.window;
+  const eventTarget = new EventTarget();
+  globalThis.window = Object.assign(eventTarget, {
+    location: { hostname, href: `http://${hostname}/` },
+  });
+  return () => {
+    globalThis.window = previousWindow;
+  };
+};
+
 afterEach(async () => {
   await localDb.transaction("rw", [localDb.templates, localDb.notebooks, localDb.memos, localDb.resources, localDb.revisions, localDb.syncMeta, localDb.syncQueue], async () => {
     await Promise.all([
@@ -25,15 +36,13 @@ afterEach(async () => {
 
 describe("web repository offline boundaries", () => {
   test("saves memo edits locally while deferring remote synchronization", async () => {
-    const previousWindow = globalThis.window;
-    const eventTarget = new EventTarget();
-    globalThis.window = eventTarget;
+    const restoreWindow = installTestWindow();
     let immediateEvents = 0;
     let deferredEvents = 0;
-    eventTarget.addEventListener("edgeever:sync-queue-changed", () => {
+    window.addEventListener("edgeever:sync-queue-changed", () => {
       immediateEvents += 1;
     });
-    eventTarget.addEventListener("edgeever:sync-queue-deferred", () => {
+    window.addEventListener("edgeever:sync-queue-deferred", () => {
       deferredEvents += 1;
     });
 
@@ -60,7 +69,7 @@ describe("web repository offline boundaries", () => {
       expect(deferredEvents).toBe(1);
       expect(immediateEvents).toBe(0);
     } finally {
-      globalThis.window = previousWindow;
+      restoreWindow();
     }
   });
 
@@ -110,6 +119,7 @@ describe("web repository offline boundaries", () => {
   test("returns cached detail immediately and refreshes it in the background", async () => {
     const previousOnline = globalThis.navigator?.onLine;
     if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: true });
+    const restoreWindow = installTestWindow();
     const scope = "https://demo.edgeever.org|user-1";
     const localMemo = {
       id: "memo-1",
@@ -129,6 +139,8 @@ describe("web repository offline boundaries", () => {
       contentText: "cached",
       contentHash: "cached",
       sourceMemoIds: [],
+      mergeSourceCount: 0,
+      mergedIntoMemoId: null,
     };
     const remoteMemo = { ...localMemo, title: "Remote title", contentMarkdown: "remote", contentText: "remote", revision: 2 };
     await localDb.memos.put({ ...localMemo, scope });
@@ -141,10 +153,154 @@ describe("web repository offline boundaries", () => {
     try {
       const repository = createWebRepository(scope);
       expect((await repository.getMemo("memo-1")).memo.title).toBe("Cached title");
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await new Promise((resolve) => setTimeout(resolve, 50));
       expect((await localDb.memos.get([scope, "memo-1"])).title).toBe("Remote title");
     } finally {
       api.getMemo = originalGetMemo;
+      restoreWindow();
+      if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: previousOnline });
+    }
+  });
+
+  test("does not overwrite a newer local autosave with a stale remote detail", async () => {
+    const previousOnline = globalThis.navigator?.onLine;
+    if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: true });
+    const restoreWindow = installTestWindow();
+    let refreshEvents = 0;
+    window.addEventListener("edgeever:memo-detail-refreshed", () => {
+      refreshEvents += 1;
+    });
+
+    const scope = "https://demo.edgeever.org|user-1";
+    const localMemo = {
+      id: "memo-stale-remote",
+      notebookId: "nb-1",
+      title: "Local autosave",
+      excerpt: "local",
+      tags: [],
+      isPinned: false,
+      isArchived: false,
+      isDeleted: false,
+      revision: 3,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-02T12:00:01.000Z",
+      deletedAt: null,
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "local" }] }] },
+      contentMarkdown: "local",
+      contentText: "local",
+      contentHash: "local-hash",
+      sourceMemoIds: [],
+      mergeSourceCount: 0,
+      mergedIntoMemoId: null,
+    };
+    // Same revision, older updatedAt — the classic "server has not received the autosave yet" case.
+    const remoteMemo = {
+      ...localMemo,
+      title: "Stale remote",
+      excerpt: "remote",
+      updatedAt: "2026-01-02T12:00:00.000Z",
+      contentMarkdown: "remote",
+      contentText: "remote",
+      contentHash: "remote-hash",
+    };
+    await localDb.memos.put({ ...localMemo, scope });
+    await localDb.syncQueue.put({
+      id: `memo.update:${localMemo.id}`,
+      kind: "memo.update",
+      scope,
+      memoId: localMemo.id,
+      status: "pending",
+      payload: {
+        memoId: localMemo.id,
+        expectedRevision: 3,
+        expectedContentHash: "local-hash",
+        editSessionId: "edit-1",
+        title: "Local autosave",
+        contentJson: localMemo.contentJson,
+        tags: [],
+      },
+      attemptCount: 0,
+      lastError: null,
+      nextAttemptAt: null,
+      claimId: null,
+      createdAt: localMemo.updatedAt,
+      updatedAt: localMemo.updatedAt,
+    });
+
+    const originalGetMemo = api.getMemo;
+    api.getMemo = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return { memo: remoteMemo };
+    };
+
+    try {
+      const repository = createWebRepository(scope);
+      expect((await repository.getMemo(localMemo.id)).memo.title).toBe("Local autosave");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect((await localDb.memos.get([scope, localMemo.id])).title).toBe("Local autosave");
+      expect(refreshEvents).toBe(0);
+    } finally {
+      api.getMemo = originalGetMemo;
+      restoreWindow();
+      if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: previousOnline });
+    }
+  });
+
+  test("does not prefer a stale remote that wins the local/remote race", async () => {
+    const previousOnline = globalThis.navigator?.onLine;
+    if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: true });
+    const restoreWindow = installTestWindow();
+
+    const scope = "https://demo.edgeever.org|user-1";
+    const localMemo = {
+      id: "memo-race",
+      notebookId: "nb-1",
+      title: "Local wins",
+      excerpt: "local",
+      tags: [],
+      isPinned: false,
+      isArchived: false,
+      isDeleted: false,
+      revision: 1,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-02T12:00:01.000Z",
+      deletedAt: null,
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown: "local",
+      contentText: "local",
+      contentHash: "local",
+      sourceMemoIds: [],
+      mergeSourceCount: 0,
+      mergedIntoMemoId: null,
+    };
+    const remoteMemo = {
+      ...localMemo,
+      title: "Stale remote race",
+      updatedAt: "2026-01-02T12:00:00.000Z",
+      contentMarkdown: "remote",
+      contentText: "remote",
+    };
+    await localDb.memos.put({ ...localMemo, scope });
+
+    const originalGetMemo = api.getMemo;
+    const originalLocalGet = localDb.memos.get;
+    api.getMemo = async () => ({ memo: remoteMemo });
+    // Delay local read so remote wins Promise.race.
+    localDb.memos.get = async (...args) => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return originalLocalGet.apply(localDb.memos, args);
+    };
+
+    try {
+      const repository = createWebRepository(scope);
+      const result = await repository.getMemo(localMemo.id);
+      expect(result.memo.title).toBe("Local wins");
+      localDb.memos.get = originalLocalGet;
+      expect((await localDb.memos.get([scope, localMemo.id])).title).toBe("Local wins");
+    } finally {
+      api.getMemo = originalGetMemo;
+      localDb.memos.get = originalLocalGet;
+      restoreWindow();
       if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: previousOnline });
     }
   });
@@ -152,6 +308,8 @@ describe("web repository offline boundaries", () => {
   test("returns empty initialized collections without cloud fallbacks", async () => {
     const previousOnline = globalThis.navigator?.onLine;
     if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: false });
+    // Non-loopback host so navigator.onLine=false is treated as offline.
+    const restoreWindow = installTestWindow({ hostname: "demo.edgeever.org" });
     const scope = "https://demo.edgeever.org|user-1";
     await localDb.syncMeta.put({ scope, key: "identity", value: "sync-1", updatedAt: new Date().toISOString() });
     const original = {
@@ -176,6 +334,7 @@ describe("web repository offline boundaries", () => {
       api.listTemplates = original.listTemplates;
       api.listResources = original.listResources;
       api.listNotebooks = original.listNotebooks;
+      restoreWindow();
       if (globalThis.navigator) Object.defineProperty(globalThis.navigator, "onLine", { configurable: true, value: previousOnline });
     }
   });

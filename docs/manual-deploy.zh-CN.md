@@ -58,6 +58,16 @@ bun run deploy:manual
 
 不要提交 `.env.local`，也不要把密码写入 D1。
 
+## 启用第三方 OSS 设置
+
+如需在**设置 → 高级设置**中配置兼容 S3 API 的对象存储，请先给已部署的 Worker 添加一个稳定的加密 Secret：
+
+```sh
+bunx wrangler secret put EDGE_EVER_STORAGE_ENCRYPTION_KEY
+```
+
+请使用至少 32 个字符的随机值并安全备份。EdgeEver 会先加密外部 Secret Access Key，再将其保存到 D1。丢失或更换这个加密密钥会导致之前保存的外部凭据无法使用。添加 Secret 后重新部署或重启 Worker，然后先使用“测试连接”，再保存 OSS 配置。
+
 ## 故障恢复
 
 - 数据库未就绪：确认 D1 binding 为 `DB`，然后运行 `bun run deploy:manual`。

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 
 const storage = new Map();
 const calls = [];
@@ -6,7 +6,9 @@ const events = [];
 let completeSave;
 let secureSessionToken = "";
 let failSecureSessionWrite = false;
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 
+// Must be installed before importing modules that read `window` at load time.
 globalThis.window = {
   location: { hostname: "notes.example.com", origin: "https://notes.example.com" },
   edgeeverDesktop: {
@@ -50,6 +52,14 @@ globalThis.window = {
     return true;
   },
 };
+
+afterAll(() => {
+  if (originalWindow) {
+    Object.defineProperty(globalThis, "window", originalWindow);
+  } else {
+    delete globalThis.window;
+  }
+});
 
 const {
   DESKTOP_API_BASE_URL_STORAGE_KEY,

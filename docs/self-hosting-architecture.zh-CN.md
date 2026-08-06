@@ -45,7 +45,7 @@ EdgeEver 容器
 
 - 保持 `/api/*`、`/mcp`、`/api/openapi.json` 和 `/api/health` 不变。
 - 继续追加 `migrations/*.sql`，禁止为 Docker 分叉数据库结构。
-- 密钥必须通过环境变量或 Docker secrets 注入，不能写入镜像或数据库挂载卷。
+- `EDGE_EVER_STORAGE_ENCRYPTION_KEY` 等根密钥必须通过环境变量或 Docker secrets 注入，不能写入镜像或数据库；从实例设置录入的凭据只能以该部署级密钥保护的 AES-GCM 密文形式保存。
 - 将 `/data` 作为唯一必需的应用持久化路径，方便 NAS 用户备份一个卷。
 - 容器入口需要支持 `EDGE_EVER_AUTH_USERNAME`、`EDGE_EVER_AUTH_PASSWORD` 和
   会话配置，同时不能把 Cloudflare 专有配置当作前置条件。

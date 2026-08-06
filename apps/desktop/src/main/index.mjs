@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, session, net, protocol, shell, dialog, safeStorage } from "electron";
+import { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, session, net, protocol, shell, dialog, safeStorage, clipboard } from "electron";
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -30,6 +30,29 @@ if (requestedUserDataDirectory) app.setPath("userData", requestedUserDataDirecto
 
 const currentDirectory = fileURLToPath(new URL(".", import.meta.url));
 const projectRoot = join(currentDirectory, "../../..");
+/**
+ * Force Dock to use our multi-resolution app icon. Bundle Info.plist is still
+ * the primary source; this covers cases where Launch Services/Dock cache a
+ * blank tile after overwrite installs.
+ */
+const applyMacDockIcon = () => {
+  if (process.platform !== "darwin" || !app.dock) return;
+  const candidates = app.isPackaged
+    ? [join(process.resourcesPath, "icon.icns"), join(process.resourcesPath, "icon.png")]
+    : [
+        join(projectRoot, "apps/desktop/assets/icon.icns"),
+        join(projectRoot, "apps/desktop/assets/icon.png"),
+        join(projectRoot, "apps/web/public/pwa-512x512.png"),
+      ];
+  for (const iconPath of candidates) {
+    if (!existsSync(iconPath)) continue;
+    const image = nativeImage.createFromPath(iconPath);
+    if (!image.isEmpty()) {
+      app.dock.setIcon(image);
+      return;
+    }
+  }
+};
 const webUrl = process.env.EDGE_EVER_DESKTOP_WEB_URL || "http://127.0.0.1:5173";
 // A packaged desktop app is self-hosted-client software: its instance URL must
 // come from the user-facing first-run setup, never from the build environment.
@@ -564,6 +587,7 @@ const confirmMacInstallation = async () => {
 };
 
 app.whenReady().then(async () => {
+  applyMacDockIcon();
   if (app.isPackaged && isMountedInstallerPath(app.getAppPath())) {
     const isChinese = app.getLocale().toLowerCase().startsWith("zh");
     const result = await dialog.showMessageBox({
@@ -619,7 +643,15 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("desktop:sidecar-request", async (_event, method, params) => {
     if (!sidecar) throw new Error("EdgeEver sidecar is unavailable");
-    return sidecar.request(method, params);
+    const result = await sidecar.request(method, params);
+    if (method === "resource.delete" && isSafeResourceId(params?.resourceId)) {
+      const directory = resourceCacheDirectory();
+      await Promise.all([
+        unlink(join(directory, `${params.resourceId}.bin`)).catch(() => {}),
+        unlink(join(directory, `${params.resourceId}.json`)).catch(() => {}),
+      ]);
+    }
+    return result;
   });
   ipcMain.handle("desktop:sidecar-status", () => ({ available: Boolean(sidecar), path: sidecarPath, scope: sidecarScopeKey }));
   ipcMain.handle("desktop:set-account-scope", async (_event, accountId) => {
@@ -643,6 +675,11 @@ app.whenReady().then(async () => {
   });
   ipcMain.on("desktop:api-base-url-sync", (event) => { event.returnValue = configuredApiBaseUrl; });
   ipcMain.on("desktop:session-token-sync", (event) => { event.returnValue = desktopSessionToken; });
+  ipcMain.handle("desktop:copy-text", (_event, value) => {
+    if (typeof value !== "string") throw new Error("Clipboard value must be a string");
+    clipboard.writeText(value);
+    return clipboard.readText() === value;
+  });
   ipcMain.handle("desktop:set-session-token", async (_event, value) => {
     await saveDesktopSessionToken(value);
     return { stored: Boolean(desktopSessionToken) };

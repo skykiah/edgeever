@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("edgeeverDesktop", Object.freeze({
   apiBaseUrl: ipcRenderer.sendSync("desktop:api-base-url-sync"),
   setApiBaseUrl: (value) => ipcRenderer.invoke("desktop:set-api-base-url", value),
   getSessionToken: () => ipcRenderer.sendSync("desktop:session-token-sync"),
+  copyText: (value) => ipcRenderer.invoke("desktop:copy-text", value),
   setSessionToken: (value) => ipcRenderer.invoke("desktop:set-session-token", value),
   clearSessionToken: () => ipcRenderer.invoke("desktop:clear-session-token"),
   updateStatus: () => ipcRenderer.invoke("desktop:update-status"),

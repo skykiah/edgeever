@@ -27,15 +27,10 @@
 }
 
 .edgeever-editor[data-editor-theme="minimal-emerald"]:not([data-editor-theme="default"]) .ProseMirror {
-  font-size: 1rem;
-  line-height: 1.75;
   letter-spacing: -0.003em;
 }
 
 .edgeever-editor[data-editor-theme="minimal-emerald"]:not([data-editor-theme="default"]) .ProseMirror p {
-  margin: 0;
-  padding: 0.4rem 0;
-  line-height: 1.75;
   color: var(--editor-theme-text);
 }
 
@@ -92,17 +87,6 @@
   background: var(--editor-theme-soft);
   color: var(--editor-theme-muted);
   padding: 0.6rem 1rem;
-}
-
-.edgeever-editor[data-editor-theme="minimal-emerald"]:not([data-editor-theme="default"]) .ProseMirror ul,
-.edgeever-editor[data-editor-theme="minimal-emerald"]:not([data-editor-theme="default"]) .ProseMirror ol {
-  margin: 0.5rem 0;
-  padding-left: 1.4rem;
-}
-
-.edgeever-editor[data-editor-theme="minimal-emerald"]:not([data-editor-theme="default"]) .ProseMirror li {
-  margin: 0.2rem 0;
-  line-height: 1.7;
 }
 
 .edgeever-editor[data-editor-theme="minimal-emerald"]:not([data-editor-theme="default"]) .ProseMirror li::marker {

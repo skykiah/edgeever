@@ -3,6 +3,7 @@ import { ApiRequestError, type createEdgeEverClient } from "@edgeever/client";
 import {
   createEmptySyncQueueSummary,
   createEmptySyncRunResult,
+  formatLocalDraftClipboardText,
   getNextSyncQueueRetryDelay,
   getSyncRetryAt,
   summarizeSyncQueue,
@@ -10,6 +11,7 @@ import {
   type SyncQueueSummary,
   type SyncRunResult,
 } from "@edgeever/shared";
+import { readMobileMemoDraft } from "./mobile-drafts";
 
 const LEGACY_SYNC_QUEUE_KEY = "edgeever.mobile.syncQueue.v1";
 const SYNC_QUEUE_KEY_PREFIX = "edgeever.mobile.syncQueue.v2";
@@ -143,6 +145,62 @@ export const listMobileSyncQueueItems = async (scope: string) =>
 export const deleteMobileSyncQueueItem = async (scope: string, id: string) => {
   await removeMobileSyncQueueItem(scope, id);
   return loadMobileSyncQueueSummary(scope);
+};
+
+/**
+ * Discard a single note's conflicted local queue item and return the
+ * authoritative cloud memo so the UI can rehydrate cleanly.
+ */
+export const discardMobileMemoConflict = async (
+  client: ReturnType<typeof createEdgeEverClient>,
+  scope: string,
+  memoId: string,
+) => {
+  const remote = await client.getMemo(memoId, { includeDeleted: true });
+  const queueId = getMobileMemoUpdateQueueId(memoId);
+  const items = await readMobileSyncQueue(scope);
+
+  for (const item of items) {
+    if (item.memoId !== memoId) {
+      continue;
+    }
+    if (item.id === queueId || item.status === "conflict") {
+      await removeMobileSyncQueueItem(scope, item.id);
+    }
+  }
+
+  return remote.memo;
+};
+
+/** Resolve the best local draft snapshot to copy when a conflict is shown. */
+export const getMobileConflictDraftClipboardText = async (scope: string, memoId: string) => {
+  const [queued, draft] = await Promise.all([
+    readMobileSyncQueue(scope).then((items) =>
+      items.find((item) => item.memoId === memoId && item.kind === "memo.update")
+    ),
+    readMobileMemoDraft(memoId),
+  ]);
+
+  if (queued && queued.kind === "memo.update") {
+    return formatLocalDraftClipboardText({
+      title: queued.payload.title,
+      tags: queued.payload.tags,
+      contentMarkdown: queued.payload.contentMarkdown,
+    });
+  }
+
+  if (draft) {
+    return formatLocalDraftClipboardText({
+      title: draft.title,
+      tags: draft.tagsText
+        .split(/[,，]/u)
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+      contentMarkdown: draft.contentMarkdown,
+    });
+  }
+
+  return null;
 };
 
 export const syncMobileQueuedChanges = async (

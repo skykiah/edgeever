@@ -56,6 +56,8 @@ import type {
   ShortcutSettings,
   MemoFilterMode,
   MemoSortMode,
+  MemoDocumentAction,
+  MemoDocumentActionRequest,
 } from "@/lib/app-helpers";
 import {
   MIN_MEMO_LIST_WIDTH_PX,
@@ -84,6 +86,7 @@ import {
 } from "@/lib/app-helpers";
 import { useBrowserBackLayer } from "@/lib/app-hooks";
 import { updateMemoSummaryInLists, type MemoListQueryData } from "@/lib/memo-list-cache";
+import { shouldAcceptRemoteMemoDetail } from "@/lib/memo-detail-freshness";
 import { emptySyncQueueSummary, type SyncQueueSummary } from "@/lib/sync-queue";
 import { notifyMemoIdRemapped } from "@/lib/sync-events";
 import {
@@ -698,6 +701,8 @@ export const WorkspaceApp = ({
   const pendingCreatedMemoIdRef = useRef<string | null>(null);
   const creatingMemoSelectionRef = useRef(false);
   const [selectedMemoIds, setSelectedMemoIds] = useState<Set<string>>(new Set());
+  const memoDocumentActionIdRef = useRef(0);
+  const [memoDocumentActionRequest, setMemoDocumentActionRequest] = useState<MemoDocumentActionRequest | null>(null);
   const [memoSelectionMode, setMemoSelectionMode] = useState(false);
   const [selectionMoveTargetNotebookId, setSelectionMoveTargetNotebookId] = useState("");
   const [memoDeleteConfirmation, setMemoDeleteConfirmation] = useState<MemoDeleteConfirmation | null>(null);
@@ -1478,9 +1483,21 @@ export const WorkspaceApp = ({
       const memo = (event as CustomEvent<MemoDetail>).detail;
       if (!memo?.id) return;
 
-      queryClient.setQueryData(memoDetailQueryKey(memo.id, "notebook"), { memo });
-      queryClient.setQueryData(memoDetailQueryKey(memo.id, "trash"), { memo });
-      updateMemoSummaryInLists(queryClient, memoToSummary(memo));
+      // Repository already filters stale remotes; still refuse to regress the
+      // in-memory query cache if a newer local snapshot is already present.
+      let accepted = false;
+      for (const view of ["notebook", "trash"] as const) {
+        const key = memoDetailQueryKey(memo.id, view);
+        const current = queryClient.getQueryData<{ memo: MemoDetail }>(key)?.memo;
+        if (current && !shouldAcceptRemoteMemoDetail(current, memo)) {
+          continue;
+        }
+        queryClient.setQueryData(key, { memo });
+        accepted = true;
+      }
+      if (accepted) {
+        updateMemoSummaryInLists(queryClient, memoToSummary(memo));
+      }
     };
 
     window.addEventListener("edgeever:memo-detail-refreshed", handleMemoDetailRefreshed);
@@ -2927,6 +2944,23 @@ export const WorkspaceApp = ({
               onEmptyTrash={handleEmptyTrash}
               onRestoreMemo={handleRestoreMemoFromList}
               onMoveMemo={handleMoveMemoFromList}
+              onRequestDocumentAction={(memoId: string, action: MemoDocumentAction, printWindow?: Window | null) => {
+                if (shouldNavigateHomeWhenOpeningMemo(memoView)) {
+                  navigateWorkspaceHome();
+                }
+                setRightView("editor");
+                clearPendingCreatedMemo();
+                setCreatedMemoEditId(null);
+                setSelectedMemoId(memoId);
+                setActivePane("editor");
+                memoDocumentActionIdRef.current += 1;
+                setMemoDocumentActionRequest({
+                  id: memoDocumentActionIdRef.current,
+                  memoId,
+                  action,
+                  printWindow,
+                });
+              }}
               onTogglePinMemo={handleToggleMemoPinned}
               onPinSelectedMemos={handlePinSelectedMemos}
               onDeleteSelectedMemos={handleDeleteSelectedMemos}
@@ -3016,6 +3050,10 @@ export const WorkspaceApp = ({
                     contentSearchQuery={search}
                     searchFocusToken={noteSearchFocusToken}
                     replaceFocusToken={noteReplaceFocusToken}
+                    documentActionRequest={memoDocumentActionRequest}
+                    onDocumentActionConsumed={(requestId) => {
+                      setMemoDocumentActionRequest((current) => current?.id === requestId ? null : current);
+                    }}
                     onOpenMemo={(memoId) => {
                       clearPendingCreatedMemo();
                       setMemoView("notebook");

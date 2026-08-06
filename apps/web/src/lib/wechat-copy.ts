@@ -1,16 +1,21 @@
 import type { Editor } from "@tiptap/react";
+import { MEMO_CONTENT_STYLE } from "@edgeever/shared";
 import { marked } from "marked";
 import { parseCustomCssToStyles } from "@/lib/css-sandbox";
 
+const BODY_LINE_HEIGHT = MEMO_CONTENT_STYLE.body.lineHeight / MEMO_CONTENT_STYLE.body.fontSize;
+const BODY_FONT_SIZE = `${MEMO_CONTENT_STYLE.body.fontSize}px`;
+const PARAGRAPH_SPACING = `${MEMO_CONTENT_STYLE.body.paragraphSpacing}px`;
+
 const WECHAT_STYLES: Record<string, string> = {
-  p: "margin: 0 0 1em; line-height: 1.75; font-size: 16px; color: #333;",
+  p: `margin: 0 0 ${PARAGRAPH_SPACING}; padding: 0; line-height: ${BODY_LINE_HEIGHT}; font-size: ${BODY_FONT_SIZE}; color: #333;`,
   h1: "margin: 1.2em 0 0.6em; font-size: 24px; line-height: 1.35; font-weight: 700; color: #1f2937;",
   h2: "margin: 1.1em 0 0.55em; font-size: 21px; line-height: 1.4; font-weight: 700; color: #1f2937;",
   h3: "margin: 1em 0 0.5em; font-size: 18px; line-height: 1.45; font-weight: 700; color: #1f2937;",
-  blockquote: "margin: 1em 0; padding: 0.6em 1em; border-left: 4px solid #10b981; background: #f0fdf4; color: #4b5563; line-height: 1.75;",
-  ul: "margin: 0 0 1em; padding-left: 1.6em; line-height: 1.75;",
-  ol: "margin: 0 0 1em; padding-left: 1.6em; line-height: 1.75;",
-  li: "margin: 0.25em 0; line-height: 1.75;",
+  blockquote: `margin: 1em 0; padding: 0.6em 1em; border-left: 4px solid #10b981; background: #f0fdf4; color: #4b5563; line-height: ${BODY_LINE_HEIGHT};`,
+  ul: `margin: 0 0 1em; padding-left: 1.6em; line-height: ${BODY_LINE_HEIGHT};`,
+  ol: `margin: 0 0 1em; padding-left: 1.6em; line-height: ${BODY_LINE_HEIGHT};`,
+  li: `margin: 0.25em 0; line-height: ${BODY_LINE_HEIGHT};`,
   a: "color: #059669; text-decoration: underline;",
   strong: "font-weight: 700;",
   em: "font-style: italic;",
@@ -64,7 +69,7 @@ const applyInlineStyles = (
 
   const customStyles = customCss ? parseCustomCssToStyles(customCss) : null;
 
-  root.style.cssText = `font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 16px; line-height: 1.75; color: ${textColor}; background-color: ${bgColors}; word-break: break-word;`;
+  root.style.cssText = `font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: ${BODY_FONT_SIZE}; line-height: ${BODY_LINE_HEIGHT}; color: ${textColor}; background-color: ${bgColors}; word-break: break-word;`;
 
   root.querySelectorAll<HTMLElement>("*").forEach((element) => {
     const tagName = element.tagName.toLowerCase();
@@ -72,11 +77,11 @@ const applyInlineStyles = (
 
     if (customColors) {
       if (tagName === "p") {
-        style = `margin: 0 0 1em; line-height: 1.75; font-size: 16px; color: ${textColor};`;
+        style = `margin: 0 0 ${PARAGRAPH_SPACING}; padding: 0; line-height: ${BODY_LINE_HEIGHT}; font-size: ${BODY_FONT_SIZE}; color: ${textColor};`;
       } else if (tagName === "h1" || tagName === "h2" || tagName === "h3") {
         style = style.replace("color: #1f2937;", `color: ${textColor};`);
       } else if (tagName === "blockquote") {
-        style = `margin: 1em 0; padding: 0.6em 1em; border-left: 4px solid ${accent}; background: ${soft}; color: ${textColor}; line-height: 1.75;`;
+        style = `margin: 1em 0; padding: 0.6em 1em; border-left: 4px solid ${accent}; background: ${soft}; color: ${textColor}; line-height: ${BODY_LINE_HEIGHT};`;
       } else if (tagName === "a") {
         style = `color: ${accent}; text-decoration: underline;`;
       } else if (tagName === "code") {
@@ -97,6 +102,16 @@ const applyInlineStyles = (
     }
 
     if (style) element.style.cssText = `${style}${element.style.cssText}`;
+  });
+
+  root.querySelectorAll<HTMLElement>("p").forEach((paragraph) => {
+    paragraph.style.margin = `0 0 ${PARAGRAPH_SPACING}`;
+    paragraph.style.padding = "0";
+    paragraph.style.lineHeight = String(BODY_LINE_HEIGHT);
+  });
+
+  root.querySelectorAll<HTMLElement>("ul, ol, li, blockquote").forEach((bodyBlock) => {
+    bodyBlock.style.lineHeight = String(BODY_LINE_HEIGHT);
   });
 
   root.querySelectorAll<HTMLElement>("pre code").forEach((element) => {

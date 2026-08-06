@@ -363,6 +363,19 @@ export const putLocalResource = async (scope: string, resource: ResourceListItem
   await localDb.resources.put({ ...resource, scope });
 };
 
+export const renameLocalResource = async (scope: string, resourceId: string, filename: string) => {
+  const resource = await localDb.resources.get([scope, resourceId]);
+  if (!resource) return;
+  await localDb.resources.put({ ...resource, filename, updatedAt: new Date().toISOString() });
+};
+
+export const deleteLocalResource = async (scope: string, resourceId: string) => {
+  const resource = await localDb.resources.get([scope, resourceId]);
+  if (!resource) return;
+  await localDb.resources.delete([scope, resourceId]);
+  await removeCachedLocalResourceBytes(resource.url);
+};
+
 export const createLocalResource = async (scope: string, memoId: string, file: File) => {
   const now = new Date().toISOString();
   const id = `local_resource_${crypto.randomUUID()}`;

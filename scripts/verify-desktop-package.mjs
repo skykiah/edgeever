@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { listPackage } from "@electron/asar";
+import { assertMacIcnsComplete } from "./desktop-icns.mjs";
 
 const outputDirectory = join(process.cwd(), "release", "desktop");
 const version = JSON.parse(
@@ -58,6 +59,11 @@ if (requestedPlatform === "darwin") {
   const asarFiles = new Set(listPackage(asarPath));
   assert.ok(asarFiles.has("/src/preload/index.cjs"), "macOS app bundle must contain the sandbox-compatible CommonJS preload");
   assert.ok(!asarFiles.has("/src/preload/index.mjs"), "macOS app bundle must not contain the unsupported ESM preload");
+  const appIconPath = join(appResources, "icon.icns");
+  assert.ok(existsSync(appIconPath), `macOS app bundle is missing icon.icns: ${appIconPath}`);
+  assertMacIcnsComplete(readFileSync(appIconPath), appIconPath);
+  const infoPlist = readFileSync(join(unpackedApp, "Contents", "Info.plist"), "utf8");
+  assert.match(infoPlist, /CFBundleIconFile/, "macOS Info.plist must declare CFBundleIconFile");
   // LaunchServices registers unpacked build products as additional document
   // handlers. The signed DMG/ZIP are the release artifacts, so discard the
   // disposable unpacked bundle once its contents have passed verification.

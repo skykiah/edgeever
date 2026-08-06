@@ -17,6 +17,7 @@ import type {
   Resource,
   ResourceListItem,
   ResourceStorageSummary,
+  ObjectStorageSettings,
   PublicMemoShare,
   TagSummary,
   TiptapDoc,
@@ -58,6 +59,10 @@ type ListApiTokensResponse = {
 type ListUsersResponse = { users: InstanceUser[] };
 type UserResponse = { user: InstanceUser };
 type ListLoginDeviceSessionsResponse = { sessions: LoginDeviceSession[] };
+type ObjectStorageSettingsResponse = {
+  settings: ObjectStorageSettings;
+  externalSettings?: ObjectStorageSettings | null;
+};
 
 const WEB_DEVICE_ID_STORAGE_KEY = "edgeever.web.device-id";
 export const DESKTOP_API_BASE_URL_STORAGE_KEY = "edgeever.desktop.api-base-url";
@@ -231,12 +236,14 @@ export type JsonBackupPage = MarkdownExportPage & {
 export class ApiRequestError extends Error {
   status: number;
   code?: string;
+  details?: unknown;
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(message: string, status: number, code?: string, details?: unknown) {
     super(message);
     this.name = "ApiRequestError";
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -271,7 +278,9 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    const error = body && typeof body === "object" && "error" in body ? (body as { error?: { code?: string; message?: string } }).error : undefined;
+    const error = body && typeof body === "object" && "error" in body
+      ? (body as { error?: { code?: string; message?: string; details?: unknown } }).error
+      : undefined;
     const message =
       body && typeof body === "object" && "error" in body
         ? error?.message
@@ -289,7 +298,7 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
       }
     }
 
-    throw new ApiRequestError(message || "Request failed", response.status, error?.code);
+    throw new ApiRequestError(message || "Request failed", response.status, error?.code, error?.details);
   }
 
   const body = await response.json() as T;
@@ -358,6 +367,39 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+
+  getObjectStorageSettings: () =>
+    request<ObjectStorageSettingsResponse>("/api/v1/instance/object-storage"),
+
+  testObjectStorageConnection: (payload: {
+    endpoint: string;
+    region: string;
+    bucket: string;
+    accessKeyId: string;
+    secretAccessKey?: string;
+    forcePathStyle: boolean;
+    objectPrefix: string;
+  }) => request<{ ok: true }>("/api/v1/instance/object-storage/test", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
+
+  updateObjectStorageSettings: (payload:
+    | { provider: "builtin" }
+    | {
+        provider: "s3";
+        displayName: string;
+        endpoint: string;
+        region: string;
+        bucket: string;
+        accessKeyId: string;
+        secretAccessKey?: string;
+        forcePathStyle: boolean;
+        objectPrefix: string;
+      }) => request<ObjectStorageSettingsResponse>("/api/v1/instance/object-storage", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      }),
 
   logout: () =>
     request<{ ok: true }>("/api/v1/auth/logout", {
@@ -561,6 +603,17 @@ export const api = {
     }),
 
   listResources: () => request<ListResourcesResponse>("/api/v1/resources"),
+
+  renameResource: (resourceId: string, filename: string) =>
+    request<ResourceResponse>(`/api/v1/resources/${encodeURIComponent(resourceId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ filename }),
+    }),
+
+  deleteResource: (resourceId: string) =>
+    request<{ ok: true }>(`/api/v1/resources/${encodeURIComponent(resourceId)}`, {
+      method: "DELETE",
+    }),
 
   getMarkdownExportPage: (offset = 0, limit = 50) =>
     request<MarkdownExportPage>(`/api/v1/exports/markdown?offset=${offset}&limit=${limit}`),

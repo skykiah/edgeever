@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { findNewerMobileRelease } from "./mobile-release";
+import {
+  ANDROID_INSTALL_UPDATE_SOURCES,
+  findNewerMobileRelease,
+  getDefaultMobileInstallUpdateUrl,
+  GITHUB_LATEST_RELEASE_URL,
+  GOOGLE_PLAY_URL,
+} from "./mobile-release";
 
 const responseWithTag = (tagName: string, androidVersion = tagName.replace(/^v/, "")) => new Response(JSON.stringify({
   assets: [{ name: `edgeever-android-v${androidVersion}-arm64-v8a.apk` }],
@@ -38,4 +44,13 @@ test("rejects invalid release responses instead of claiming the app is current",
     assets: [],
     tag_name: "v0.4.15",
   })))).rejects.toThrow("exactly one Android APK");
+});
+
+test("resolves install update destinations for Android dual distribution", () => {
+  expect(getDefaultMobileInstallUpdateUrl("android")).toBe(GOOGLE_PLAY_URL);
+  expect(getDefaultMobileInstallUpdateUrl("ios")).toBe(GITHUB_LATEST_RELEASE_URL);
+  expect(ANDROID_INSTALL_UPDATE_SOURCES.map((source) => source.url)).toEqual([
+    GOOGLE_PLAY_URL,
+    GITHUB_LATEST_RELEASE_URL,
+  ]);
 });

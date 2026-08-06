@@ -18,7 +18,9 @@ fileAssociations:
     description: Open a Markdown document in EdgeEver
     role: Editor
 asar: true
-icon: ../web/public/pwa-512x512.png
+# Cross-platform master (1024). macOS uses the prebuilt full ICNS below so Dock
+# always receives ic10/ic14 instead of electron-builder's thin 512-only pack.
+icon: assets/icon.png
 directories:
   output: ../../release/desktop
 files:
@@ -34,6 +36,11 @@ extraResources:
     filter:
       - "trayTemplate.png"
       - "trayTemplate@2x.png"
+  - from: assets
+    to: .
+    filter:
+      - "icon.icns"
+      - "icon.png"
   - from: ../../migrations
     to: migrations
     filter:
@@ -45,6 +52,7 @@ extraResources:
       - edgeever-sidecar.exe
 mac:
   category: public.app-category.productivity
+  icon: assets/icon.icns
   target:
     - target: dmg
     - target: zip

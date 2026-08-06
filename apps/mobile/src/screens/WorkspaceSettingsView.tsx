@@ -58,6 +58,7 @@ export const SettingsView = ({
 }) => {
   const { resolvedTheme, toggleTheme } = useMobileTheme();
   const { translate } = useMobileLocale();
+  const { hasUpdate } = useMobileUpdate();
   const [activeTab, setActiveTab] = useState<SettingsTab | null>(null);
   const [localePickerOpen, setLocalePickerOpen] = useState(false);
   const [localePickerAnchor, setLocalePickerAnchor] = useState<{ left: number; top: number; width: number } | null>(null);
@@ -67,6 +68,7 @@ export const SettingsView = ({
     { key: "account", label: "登录设置", icon: <ShieldCheck color="#059669" size={17} /> },
   ];
   const systemInfoCopy = getMobileSystemInfoText(localePreference);
+  const systemInfoDescription = hasUpdate ? systemInfoCopy.updateAvailableDescription : systemInfoCopy.description;
   const activeTabItem = activeTab === "system"
     ? { label: systemInfoCopy.title, icon: <Info color="#059669" size={17} /> }
     : tabs.find((tab) => tab.key === activeTab);
@@ -196,12 +198,23 @@ export const SettingsView = ({
               ))}
             </View>
             <View style={styles.settingsMenu}>
-              <Pressable accessibilityRole="button" onPress={() => setActiveTab("system")} style={styles.settingsMenuRow}>
+              <Pressable
+                accessibilityHint={hasUpdate ? systemInfoCopy.updateAvailableDescription : undefined}
+                accessibilityLabel={hasUpdate ? `${systemInfoCopy.title}，${systemInfoCopy.updateAvailableTitle}` : systemInfoCopy.title}
+                accessibilityRole="button"
+                onPress={() => setActiveTab("system")}
+                style={styles.settingsMenuRow}
+              >
                 <View style={styles.settingsMenuLabel}>
                   <View style={styles.settingsMenuIcon}><Info color="#059669" size={17} /></View>
                   <View style={styles.settingsFeedbackCopy}>
-                    <Text style={styles.settingsMenuText}>{systemInfoCopy.title}</Text>
-                    <Text style={styles.settingsFeedbackDescription}>{systemInfoCopy.description}</Text>
+                    <View style={styles.settingsMenuTitleRow}>
+                      <Text style={styles.settingsMenuText}>{systemInfoCopy.title}</Text>
+                      {hasUpdate ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.updateDot} /> : null}
+                    </View>
+                    <Text style={[styles.settingsFeedbackDescription, hasUpdate && styles.settingsUpdateDescription]}>
+                      {systemInfoDescription}
+                    </Text>
                   </View>
                 </View>
                 <ChevronRight color="#94a3b8" size={17} />
@@ -278,10 +291,24 @@ const SettingsActionButton = ({
 const SystemInfoCard = ({ defaultExpanded = false }: { defaultExpanded?: boolean }) => {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const { checkForUpdate, hasUpdate, status } = useMobileUpdate();
+  const { checkForUpdate, hasUpdate, openUpdate, status, updateKind } = useMobileUpdate();
   const localePreference = useMobileLocalePreference();
+  const english = isEnglishMobileLocale(localePreference);
   const copy = getMobileSystemInfoText(localePreference);
   const infoItems = getMobileSystemInfoItems(localePreference);
+  const description = hasUpdate ? copy.updateAvailableDescription : copy.description;
+  const checking = status === "checking";
+  const downloading = status === "downloading";
+  const checkLabel = checking
+    ? (english ? "Checking…" : "正在检查…")
+    : (english ? "Check for updates" : "检查更新");
+  const openUpdateLabel = downloading
+    ? (english ? "Downloading…" : "正在下载…")
+    : status === "ready"
+      ? (english ? "Restart to apply" : "重启以应用")
+      : updateKind === "ota"
+        ? (english ? "Download update" : "下载更新")
+        : copy.openUpdate;
 
   const copySystemInfo = async () => {
     await Clipboard.setStringAsync(infoItems.map((item) => `${item.label}: ${item.value}`).join("\n"));
@@ -296,23 +323,36 @@ const SystemInfoCard = ({ defaultExpanded = false }: { defaultExpanded?: boolean
           <View style={styles.settingsGroupHeader}>
             <Info color="#047857" size={16} />
             <Text style={styles.settingsGroupTitle}>{copy.title}</Text>
-            {hasUpdate ? <View accessibilityLabel="有新版本" style={styles.updateDot} /> : null}
+            {hasUpdate ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.updateDot} /> : null}
           </View>
-          <Text style={styles.settingsLinkDescription}>{copy.description}</Text>
+          <Text style={[styles.settingsLinkDescription, hasUpdate && styles.settingsUpdateDescription]}>{description}</Text>
         </View>
         {expanded ? <ChevronDown color="#94a3b8" size={17} /> : <ChevronRight color="#94a3b8" size={17} />}
       </Pressable>
       {expanded ? (
         <View style={styles.settingsAccordionContent}>
-          <SettingsActionButton label={copied ? "已复制" : "复制信息"} onPress={copySystemInfo}>
+          <SettingsActionButton label={copied ? (english ? "Copied" : "已复制") : (english ? "Copy info" : "复制信息")} onPress={copySystemInfo}>
             {copied ? <ShieldCheck color="#047857" size={16} /> : <Copy color="#0f172a" size={16} />}
           </SettingsActionButton>
+          {hasUpdate ? (
+            <SettingsActionButton
+              disabled={downloading}
+              label={openUpdateLabel}
+              onPress={() => void openUpdate()}
+            >
+              {downloading
+                ? <ActivityIndicator color="#047857" size="small" />
+                : updateKind === "install"
+                  ? <ExternalLink color="#047857" size={16} />
+                  : <RefreshCw color="#047857" size={16} />}
+            </SettingsActionButton>
+          ) : null}
           <SettingsActionButton
-            disabled={status === "checking"}
-            label={status === "checking" ? "正在检查…" : hasUpdate ? "发现新版本" : "检查更新"}
+            disabled={checking || downloading}
+            label={checkLabel}
             onPress={() => void checkForUpdate()}
           >
-            {status === "checking" ? <ActivityIndicator color="#047857" size="small" /> : <RefreshCw color="#047857" size={16} />}
+            {checking ? <ActivityIndicator color="#047857" size="small" /> : <RefreshCw color="#047857" size={16} />}
           </SettingsActionButton>
           <View style={styles.systemInfoRows}>
             {Array.from({ length: Math.ceil(infoItems.length / 3) }, (_, rowIndex) => {
@@ -364,8 +404,11 @@ const getMobileSystemInfoText = (localePreference: MobileLocaleMode) =>
         mobileApp: "Mobile app",
         platformVersion: "System version",
         timeZone: "Time zone",
+        openUpdate: "Get update",
         title: "System info",
         unknown: "Unknown",
+        updateAvailableDescription: "A new version is available. Tap for details.",
+        updateAvailableTitle: "Update available",
         version: "Version",
       }
     : {
@@ -385,8 +428,11 @@ const getMobileSystemInfoText = (localePreference: MobileLocaleMode) =>
         mobileApp: "移动应用",
         platformVersion: "系统版本",
         timeZone: "时区",
+        openUpdate: "前往更新",
         title: "系统信息",
         unknown: "未知",
+        updateAvailableDescription: "发现新版本，点按查看详情。",
+        updateAvailableTitle: "发现新版本",
         version: "版本",
       };
 

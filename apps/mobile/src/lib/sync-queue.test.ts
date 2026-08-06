@@ -16,7 +16,15 @@ mock.module("@react-native-async-storage/async-storage", () => ({
   },
 }));
 
-const { listMobileSyncQueueItems, queueMobileMemoCreate, queueMobileMemoUpdate, syncMobileQueuedChanges } = await import("./sync-queue");
+const {
+  discardMobileMemoConflict,
+  getMobileConflictDraftClipboardText,
+  listMobileSyncQueueItems,
+  queueMobileMemoCreate,
+  queueMobileMemoUpdate,
+  syncMobileQueuedChanges,
+} = await import("./sync-queue");
+const { writeMobileMemoDraft, clearMobileMemoDraft } = await import("./mobile-drafts");
 
 const basePayload = {
   memoId: "memo-1",
@@ -61,6 +69,51 @@ test("keeps a stale mobile edit as an explicit conflict without overwriting the 
   expect(updateCalled).toBe(false);
   expect(queued?.status).toBe("conflict");
   expect(queued?.payload.contentMarkdown).toBe("first");
+});
+
+test("discardMobileMemoConflict clears the local conflict and returns the cloud memo", async () => {
+  const scope = "https://one.example";
+  await queueMobileMemoUpdate(scope, basePayload);
+  await syncMobileQueuedChanges({
+    createMemoEditSession: async () => ({
+      editSession: { id: "edit-2", baseRevision: 2, baseContentHash: "hash-2" },
+    }),
+    updateMemo: async () => {
+      throw new Error("should not update");
+    },
+  } as never, scope);
+
+  const cloud = createMemo({ revision: 3, contentHash: "hash-3", contentMarkdown: "cloud wins", title: "Cloud" });
+  const client = {
+    getMemo: async () => ({ memo: cloud }),
+  };
+
+  const adopted = await discardMobileMemoConflict(client as never, scope, "memo-1");
+  expect(adopted).toEqual(cloud);
+  expect(await listMobileSyncQueueItems(scope)).toEqual([]);
+});
+
+test("getMobileConflictDraftClipboardText prefers the queued update payload", async () => {
+  const scope = "https://one.example";
+  await queueMobileMemoUpdate(scope, {
+    ...basePayload,
+    title: "Queued title",
+    contentMarkdown: "queued body",
+    tags: ["demo"],
+  });
+  await writeMobileMemoDraft({
+    memoId: "memo-1",
+    expectedRevision: 1,
+    title: "Draft title",
+    contentMarkdown: "draft body",
+    notebookId: "notebook-1",
+    tagsText: "other",
+    updatedAt: "2026-07-15T00:00:00.000Z",
+  });
+
+  const text = await getMobileConflictDraftClipboardText(scope, "memo-1");
+  expect(text).toBe("# Queued title\n#demo\n\nqueued body");
+  await clearMobileMemoDraft("memo-1");
 });
 
 test("rebases a newer local save when an older save finishes syncing", async () => {

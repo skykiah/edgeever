@@ -20,6 +20,7 @@
   background: var(--editor-theme-bg);
   color: var(--editor-theme-text);
   font-family: var(--editor-theme-font, inherit);
+  line-height: var(--editor-body-line-height);
 }
 
 .edgeever-editor[data-editor-theme]:not([data-editor-theme="default"]) .ProseMirror h1,
@@ -82,7 +83,9 @@
 
 .edgeever-editor[data-editor-theme]:not([data-editor-theme="default"]) .ProseMirror p {
 
-  line-height: 1.8;
+  margin: 0 0 var(--editor-paragraph-spacing);
+  padding: 0;
+  line-height: var(--editor-body-line-height);
 }
 
 .edgeever-editor[data-editor-theme]:not([data-editor-theme="default"]) .ProseMirror strong {
@@ -107,7 +110,7 @@
 .edgeever-editor[data-editor-theme]:not([data-editor-theme="default"]) .ProseMirror ul,
 .edgeever-editor[data-editor-theme]:not([data-editor-theme="default"]) .ProseMirror ol {
 
-  line-height: 1.75;
+  line-height: var(--editor-body-line-height);
 }
 
 .edgeever-editor[data-editor-theme]:not([data-editor-theme="default"]) .ProseMirror li::marker {

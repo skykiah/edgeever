@@ -44,6 +44,8 @@ describe("native release planning", () => {
     const changedFiles = [
       ".github/workflows/desktop-build.yml",
       "scripts/create-mac-update-metadata.mjs",
+      "scripts/prepare-desktop-icons.mjs",
+      "scripts/desktop-icns.mjs",
       "scripts/run-desktop-builder.mjs",
     ];
     expect(planNativeRelease("desktop", changedFiles)).toEqual({

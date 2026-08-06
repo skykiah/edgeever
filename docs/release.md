@@ -1,23 +1,8 @@
 # Release Guide
 
-EdgeEver releases are prepared with a single local command. The command validates
-the repository, creates the tracking Issue, updates versions, prepares and audits
-native assets in a Draft Release, publishes the Release, and installs the final
-macOS DMG matching the maintainer's Mac architecture.
+## Run a Release
 
-This process does not perform mobile store delivery. Google Play and App Store
-Connect delivery is a separate, explicit operation documented in
-[Mobile Store Delivery](store-delivery.md).
-
-## Prerequisites
-
-- Run the command on macOS from a clean `main` branch that exactly matches
-  `origin/main`.
-- Authenticate GitHub CLI with access to `tianma-if/edgeever`.
-- Commit all user-facing changes before starting the release.
-- Ensure every English change bullet has a corresponding Chinese bullet.
-
-## Command
+Run from a clean `main` branch on macOS that matches `origin/main`:
 
 ```bash
 bun run release -- \
@@ -25,100 +10,56 @@ bun run release -- \
   --issue-title "Improve the release workflow" \
   --label enhancement \
   --change-en "Run required release checks in parallel." \
-  --change-zh "并行执行发布所需检查。"
+  --change-zh "并行执行发布所需检查。" \
+  --change-commit "abcdef1"
 ```
 
-Repeat `--change-en` and `--change-zh` in matching pairs when a Release contains
-multiple changes. Repeat `--label` when the tracking Issue needs multiple labels.
-Public Release notes contain only user-visible changes, their impact, and any
-required upgrade or migration guidance. Type checks, build commands, signing,
-notarization, and asset-audit details remain in GitHub Actions and the linked
-tracking Issue instead of being repeated in the public notes.
+Repeat `--change-en`, `--change-zh`, and `--change-commit` as matching groups.
+One change may cover multiple comma-separated commits:
 
-`--bump` is required and must be selected from the user and compatibility impact
-of the complete Release:
+```bash
+--change-commit "abcdef1,1234567"
+```
 
-- `patch` fixes bugs or makes small security, performance, or visual improvements
-  without adding a new user workflow.
-- `minor` adds a backward-compatible feature or a coherent group of new
-  capabilities.
-- `major` introduces an incompatible data format, sync protocol, public API, or
-  deployment change. Its release notes must describe the compatibility impact
-  and migration path.
+Every commit since the previous formal Release must be covered. Exclude a
+non-user-facing commit with a concrete reason:
 
-The command calculates the next stable version and resets lower components:
-`1.6.52 + patch` becomes `1.6.53`, `+ minor` becomes `1.7.0`, and `+ major`
-becomes `2.0.0`. Commit prefixes may inform the choice, but do not select it
-automatically because code scope and product impact are not equivalent.
+```bash
+--ignore-commit "89abcde:test-only coverage"
+```
 
-Use `--dry-run` to inspect the native rebuild plan and generated bilingual notes
-without changing local or GitHub state. `--skip-install` skips the post-release
-DMG installation and is intended for exceptional or non-macOS runs; normal
-maintainer releases should install and launch the published application.
+The coverage audit runs before any local or GitHub mutation. Its mapping is
+stored in the tracking Issue, not in the public Release notes. Public notes
+contain only user-visible changes, impact, and necessary migration guidance.
 
-## Release Cadence and Platform Versions
+Use `--dry-run` to inspect commit coverage, the native rebuild plan, and notes.
+Use `--skip-install` only when the published macOS application should not be
+installed and launched after the Release.
 
-A formal Release represents a coherent stable product batch, not an individual
-commit or deployment. Related fixes should normally be grouped into one Patch
-Release. A separate Patch is appropriate for urgent crashes, data-loss risks, or
-security fixes. Builds between Releases use the Git commit/build label and do not
-consume stable version numbers.
+## EdgeEver-Specific Behavior
 
-The root version and GitHub tag identify the overall product Release. Native
-marketing versions change only when that native runtime is rebuilt. Android
-`versionCode` and iOS build numbers remain independent, monotonically increasing
-store build identifiers.
+- Stable tags and Release titles use `vX.Y.Z`.
+- The root version identifies the product Release. Native marketing versions
+  change only when that native runtime is rebuilt. Android `versionCode` and
+  iOS build numbers remain independent, monotonically increasing identifiers.
+- A formal Release contains macOS arm64 and x64 DMGs, architecture-specific
+  updater ZIPs, and an Android arm64 APK. Unchanged native assets are reused
+  with their original filenames, versions, and checksums.
+- Desktop and Android update checks use the version embedded in the applicable
+  Release asset rather than the overall GitHub tag. This prevents a Web-only or
+  API-only Release from prompting an unnecessary native update.
+- The script creates the tracking Issue and Draft Release, validates or reuses
+  native assets, publishes, closes the Issue, and installs the matching DMG.
+  Demo deployment continues independently after its Actions URL is printed.
+- Mobile store delivery is not part of this command. See
+  [Mobile Store Delivery](store-delivery.md).
 
-Stable tags and their GitHub Release titles both use `vX.Y.Z`.
+## Failure and Resume
 
-When verified DMGs or an APK are reused, their original filenames and native
-versions remain unchanged. Every formal Release contains separate macOS arm64
-and x64 DMGs plus architecture-specific updater ZIPs. Desktop and Android update
-checks derive the latest applicable version from their corresponding Release
-asset instead of comparing against the overall GitHub tag. This prevents an
-unchanged native client from repeatedly offering an update for a Web-only or
-API-only Release.
-
-## Automated Flow
-
-1. Verify `main`, the working tree, GitHub authentication, the latest formal
-   Release, and the local/remote commit relationship.
-2. Run Web type checking, mobile type checking, the Web production build, and
-   release-planning tests concurrently.
-3. Calculate the explicit `patch`, `minor`, or `major` version bump, then use
-   `scripts/plan-native-release.mjs` to determine whether desktop and Android
-   assets must be rebuilt or can be reused. Only affected native versions are
-   updated.
-4. Create a bilingual tracking Issue, commit the version changes to `main`, push,
-   and create a Draft Release with bilingual notes.
-5. Dispatch the desktop and Android asset workflows concurrently. The desktop
-   workflow builds arm64 and x64 packages on matching native runners, then
-   combines their update metadata. Verify filenames, sizes, and checksums before
-   publication.
-6. Publish the Release and wait only for the required desktop and Android
-   post-publication audits.
-7. Print the Demo deployment run or workflow URL. Demo deployment continues in
-   the background and does not delay release completion.
-8. Link and close the tracking Issue, download the final DMG matching the
-   maintainer Mac's architecture, verify its checksum and signature, replace
-   `/Applications/EdgeEver.app`, and launch it.
-
-No Release step builds a Play AAB, starts an EAS iOS build, or uploads to a
-mobile store.
-
-The release version commit includes the standard GitHub Actions skip marker.
-Draft asset workflows are dispatched explicitly, so this avoids an unnecessary
-push-triggered Android build without skipping required release builds.
-
-## Failure and Resume Behavior
-
-- A validation or Draft asset failure leaves the Release unpublished.
-- If the process stops after the version commit and Draft creation, rerun the
-  same command. A Draft whose version and target match the current `main` commit
-  is resumed instead of creating another Issue, commit, or Release.
-- A failed post-publication native audit attempts to return the Release to Draft
-  and leaves the Issue open for correction.
-- A failed application replacement restores the previous app from the macOS
-  Trash backup when possible.
-- Demo deployment status is intentionally independent of Release completion;
-  use the printed Actions URL to inspect or retry it.
+- Validation or Draft asset failures leave the Release unpublished.
+- Rerunning the same command resumes a matching Draft created by an interrupted
+  run instead of creating another Issue, commit, or Release.
+- A failed post-publication native audit attempts to return the Release to
+  Draft and leaves the Issue open.
+- If application replacement fails, the script restores the previous app from
+  its macOS Trash backup when possible.

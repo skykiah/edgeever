@@ -119,6 +119,40 @@ export const TagRenameSchema = z.object({
   name: z.string().trim().min(1).max(80),
 });
 
+export const ResourceUpdateSchema = z.object({
+  filename: z.string().trim().min(1).max(160),
+});
+
+const ObjectStorageEndpointSchema = z.string().trim().url().max(500).refine(
+  (value) => value.startsWith("https://") || value.startsWith("http://"),
+  "Object storage endpoint must use HTTP or HTTPS.",
+);
+
+export const ObjectStorageSettingsUpdateSchema = z.discriminatedUnion("provider", [
+  z.object({ provider: z.literal("builtin") }),
+  z.object({
+    provider: z.literal("s3"),
+    displayName: z.string().trim().min(1).max(80),
+    endpoint: ObjectStorageEndpointSchema,
+    region: z.string().trim().min(1).max(80),
+    bucket: z.string().trim().min(1).max(255),
+    accessKeyId: z.string().trim().min(1).max(256),
+    secretAccessKey: z.string().min(1).max(1024).optional(),
+    forcePathStyle: z.boolean().default(true),
+    objectPrefix: z.string().trim().max(500).default(""),
+  }),
+]);
+
+export const ObjectStorageConnectionTestSchema = z.object({
+  endpoint: ObjectStorageEndpointSchema,
+  region: z.string().trim().min(1).max(80),
+  bucket: z.string().trim().min(1).max(255),
+  accessKeyId: z.string().trim().min(1).max(256),
+  secretAccessKey: z.string().min(1).max(1024).optional(),
+  forcePathStyle: z.boolean().default(true),
+  objectPrefix: z.string().trim().max(500).default(""),
+});
+
 export type NotebookCreateInput = z.infer<typeof NotebookCreateSchema>;
 export type NotebookUpdateInput = z.infer<typeof NotebookUpdateSchema>;
 export type MemoCreateInput = z.infer<typeof MemoCreateSchema>;
@@ -135,3 +169,6 @@ export type UserCreateInput = z.infer<typeof UserCreateSchema>;
 export type UserUpdateInput = z.infer<typeof UserUpdateSchema>;
 export type ApiTokenCreateInput = z.infer<typeof ApiTokenCreateSchema>;
 export type TagRenameInput = z.infer<typeof TagRenameSchema>;
+export type ResourceUpdateInput = z.infer<typeof ResourceUpdateSchema>;
+export type ObjectStorageSettingsUpdateInput = z.infer<typeof ObjectStorageSettingsUpdateSchema>;
+export type ObjectStorageConnectionTestInput = z.infer<typeof ObjectStorageConnectionTestSchema>;

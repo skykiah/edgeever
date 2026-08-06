@@ -6,6 +6,7 @@ import { MERMAID_THEME_PALETTES, useTheme } from "./ThemeProvider";
 import { MermaidViewer } from "./MermaidViewer";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { renderMermaidWithFallback } from "@/lib/mermaid-renderer";
+import { getOfficialMermaidThemeVariables } from "@/lib/mermaid-theme";
 
 type MermaidModule = typeof import("mermaid")["default"];
 type BeautifulMermaidModule = typeof import("beautiful-mermaid");
@@ -79,22 +80,7 @@ export const MermaidCodeBlock = ({ editor, node }: NodeViewProps) => {
           securityLevel: "strict",
           suppressErrorRendering: true,
           theme: "base",
-          themeVariables: {
-            background: palette.bg,
-            primaryColor: palette.surface ?? palette.bg,
-            primaryTextColor: palette.fg,
-            primaryBorderColor: palette.border ?? palette.fg,
-            lineColor: palette.line ?? palette.fg,
-            textColor: palette.fg,
-            mainBkg: palette.bg,
-            nodeBorder: palette.border ?? palette.fg,
-            edgeLabelBackground: palette.bg,
-            actorBkg: palette.surface ?? palette.bg,
-            actorBorder: palette.border ?? palette.fg,
-            actorTextColor: palette.fg,
-            signalColor: palette.line ?? palette.fg,
-            signalTextColor: palette.fg,
-          },
+          themeVariables: getOfficialMermaidThemeVariables(palette),
         });
         const valid = await mermaid.parse(source, { suppressErrors: true });
         if (!valid) throw new Error("Invalid Mermaid diagram");
@@ -237,6 +223,7 @@ export const MermaidCodeBlock = ({ editor, node }: NodeViewProps) => {
           className="edgeever-mermaid-preview"
           contentEditable={false}
           aria-label={t("editorToolbar.mermaidPreview")}
+          style={{ backgroundColor: MERMAID_THEME_PALETTES[mermaidTheme].bg }}
         >
           {!source && <p className="edgeever-mermaid-message">{t("editorToolbar.mermaidEmpty")}</p>}
           {source && renderState === "loading" && !svg && (

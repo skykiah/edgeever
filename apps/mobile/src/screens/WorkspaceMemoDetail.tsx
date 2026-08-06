@@ -1,41 +1,116 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { MEMO_CONTENT_STYLE, resolveMemoContentMarkdown, type MemoDetail } from "@edgeever/shared";
-import { ActivityIndicator, Image as RNImage, Platform, ScrollView, StyleSheet, Text as RNText, useWindowDimensions, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { resolveMemoContentDoc, type MemoDetail, type TiptapDoc } from "@edgeever/shared";
+import { ActivityIndicator, Image as RNImage, Platform, StyleSheet, View, type ImageStyle, type StyleProp } from "react-native";
 import { Modal } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import Markdown, { type ASTNode, type RenderRules } from "react-native-markdown-display";
 import { SvgXml } from "react-native-svg";
 import { ChevronDown, ChevronLeft, ChevronRight, History, MoreHorizontal, Pencil, RotateCcw, Search, Share2, Tag, Trash2, X } from "../components/icons";
-import { Pressable, Text, TextInput } from "../components/LocalizedText";
-import { MobileMermaidDiagram, MobileMermaidProvider } from "../components/MobileMermaid";
-import { getMobileMarkdownFenceLanguage, trimMobileMarkdownFenceContent } from "../lib/mobile-mermaid";
+import { Alert, Pressable, Text, TextInput } from "../components/LocalizedText";
+import LocalTiptapEditor, { type LocalTiptapEditorRef } from "../components/LocalTiptapEditor";
+import { MobileResourceActions } from "../components/MobileResourceActions";
+import {
+  openMobileResource,
+  parseMobileResourceTargetJson,
+  saveMobileResourceAs,
+  type MobileResourceTarget,
+} from "../lib/mobile-attachments";
 import { useMobileLocale } from "../lib/mobile-locale";
-import { resolveMobileThemeStyles, useMobileTheme } from "../lib/mobile-theme";
+import { useMobileTheme } from "../lib/mobile-theme";
 import { useSession } from "../lib/session";
 import { beginEditorStartup } from "../lib/startup-performance";
 import type { MobileSyncQueueItem } from "../lib/sync-queue";
-import { formatDate, getTextSearchMatches } from "./workspace-utils";
 import { styles } from "./workspace-styles";
 
-const DETAIL_CONTENT_HORIZONTAL_PADDING = 16;
-const DETAIL_TABLE_FIT_COLUMN_COUNT = 3;
-const DETAIL_TABLE_MIN_COLUMN_WIDTH = 132;
 const ANDROID_SYSTEM_NAVIGATION_FALLBACK = 48;
 const DEFAULT_MEMO_TITLE = "无标题笔记";
-const useMobileLocalePreference = () => useMobileLocale().preference;
+const RESOURCE_DATA_URL_CACHE_LIMIT = 32;
+
+type SessionLike = { baseUrl: string; token: string } | null;
+type AuthenticatedImageSource = {
+  headers?: { Authorization: string };
+  uri: string;
+};
+
+const isProtectedResourceSource = (source: string, session: SessionLike) => {
+  const baseUrl = session?.baseUrl.replace(/\/+$/, "") ?? "";
+  return source.startsWith("/api/v1/resources/")
+    || Boolean(baseUrl && (source.startsWith(`${baseUrl}/api/v1/resources/`) || source.startsWith("/api/v1/resources/")));
+};
+
+/** Ensure protected resource URLs hit the blob route the API serves. */
+const normalizeProtectedResourcePath = (source: string, session: SessionLike) => {
+  const baseUrl = session?.baseUrl.replace(/\/+$/, "") ?? "";
+  let path = source;
+  if (baseUrl && path.startsWith(`${baseUrl}/`)) {
+    path = path.slice(baseUrl.length);
+  }
+  if (!path.startsWith("/api/v1/resources/")) {
+    return path;
+  }
+  if (/\/blob(?:$|[?#])/.test(path)) {
+    return path;
+  }
+  const match = path.match(/^(\/api\/v1\/resources\/[^/?#]+)/);
+  return match ? `${match[1]}/blob` : path;
+};
 
 const getAuthenticatedResourceSource = (
   source: string,
-  session: { baseUrl: string; token: string } | null
-) => {
+  session: SessionLike
+): AuthenticatedImageSource => {
   const baseUrl = session?.baseUrl.replace(/\/+$/, "") ?? "";
   const uri = source.startsWith("/") && baseUrl ? `${baseUrl}${source}` : source;
-  const isProtectedResource = source.startsWith("/api/v1/resources/") || Boolean(baseUrl && uri.startsWith(`${baseUrl}/api/v1/resources/`));
+  const isProtectedResource = isProtectedResourceSource(source, session)
+    || Boolean(baseUrl && uri.startsWith(`${baseUrl}/api/v1/resources/`));
 
   return {
     uri,
     ...(session?.token && isProtectedResource ? { headers: { Authorization: `Bearer ${session.token}` } } : {}),
   };
+};
+
+const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onerror = () => reject(reader.error ?? new Error("资源读取失败"));
+  reader.onloadend = () => {
+    if (typeof reader.result === "string") {
+      resolve(reader.result);
+      return;
+    }
+    reject(new Error("资源读取失败"));
+  };
+  reader.readAsDataURL(blob);
+});
+
+const resourceDataUrlCache = new Map<string, Promise<string | null>>();
+const loadProtectedResourceDataUrl = (
+  source: string,
+  session: SessionLike,
+  getResourceBlob: ((resourceUrl: string) => Promise<Blob>) | null | undefined
+) => {
+  if (!getResourceBlob || !isProtectedResourceSource(source, session)) {
+    return Promise.resolve(null);
+  }
+  const path = normalizeProtectedResourcePath(source, session);
+  const cacheKey = `${session?.token ?? ""}\n${path}`;
+  const cached = resourceDataUrlCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  if (resourceDataUrlCache.size >= RESOURCE_DATA_URL_CACHE_LIMIT) {
+    const oldestKey = resourceDataUrlCache.keys().next().value;
+    if (oldestKey) {
+      resourceDataUrlCache.delete(oldestKey);
+    }
+  }
+  const pending = getResourceBlob(path)
+    .then(blobToDataUrl)
+    .catch(() => {
+      resourceDataUrlCache.delete(cacheKey);
+      return null;
+    });
+  resourceDataUrlCache.set(cacheKey, pending);
+  return pending;
 };
 
 type CachedSvgResource = {
@@ -45,9 +120,9 @@ type CachedSvgResource = {
 
 const AUTHENTICATED_SVG_CACHE_LIMIT = 24;
 const authenticatedSvgCache = new Map<string, Promise<CachedSvgResource | null>>();
-const getAuthenticatedSvgCacheKey = (source: ReturnType<typeof getAuthenticatedResourceSource>) =>
+const getAuthenticatedSvgCacheKey = (source: AuthenticatedImageSource) =>
   `${source.uri}\n${source.headers?.Authorization ?? ""}`;
-const loadAuthenticatedSvg = (source: ReturnType<typeof getAuthenticatedResourceSource>) => {
+const loadAuthenticatedSvg = (source: AuthenticatedImageSource) => {
   const cacheKey = getAuthenticatedSvgCacheKey(source);
   const cached = authenticatedSvgCache.get(cacheKey);
   if (cached) {
@@ -87,27 +162,49 @@ const loadAuthenticatedSvg = (source: ReturnType<typeof getAuthenticatedResource
 const AuthenticatedResourceImage = ({
   alt,
   fitAspect = false,
+  href,
+  loadResourceBlob,
   resizeMode = "cover",
-  source,
+  session,
   style,
 }: {
   alt: string;
   fitAspect?: boolean;
+  href: string;
+  loadResourceBlob?: ((resourceUrl: string) => Promise<Blob>) | null;
   resizeMode?: "center" | "contain" | "cover" | "repeat" | "stretch";
-  source: ReturnType<typeof getAuthenticatedResourceSource>;
+  session: SessionLike;
   style: StyleProp<ImageStyle>;
 }) => {
+  const headerSource = useMemo(() => getAuthenticatedResourceSource(href, session), [href, session]);
+  const [displaySource, setDisplaySource] = useState<AuthenticatedImageSource>(headerSource);
   const [aspectRatio, setAspectRatio] = useState(16 / 9);
   const [svgXml, setSvgXml] = useState<string | null>(null);
   const svgRequestStartedRef = useRef(false);
   const svgSourceKeyRef = useRef("");
-  const svgSourceKey = getAuthenticatedSvgCacheKey(source);
+  const svgSourceKey = getAuthenticatedSvgCacheKey(displaySource);
   const imageStyle = fitAspect ? [style, { aspectRatio, height: undefined, width: "100%" as const }] : style;
 
   useEffect(() => {
+    let cancelled = false;
     setSvgXml(null);
     setAspectRatio(16 / 9);
     svgRequestStartedRef.current = false;
+    setDisplaySource(headerSource);
+
+    void loadProtectedResourceDataUrl(href, session, loadResourceBlob).then((dataUrl) => {
+      if (cancelled || !dataUrl) {
+        return;
+      }
+      setDisplaySource({ uri: dataUrl });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [headerSource, href, loadResourceBlob, session]);
+
+  useEffect(() => {
     svgSourceKeyRef.current = svgSourceKey;
     const cached = authenticatedSvgCache.get(svgSourceKey);
     if (cached) {
@@ -134,7 +231,7 @@ const AuthenticatedResourceImage = ({
       return;
     }
     svgRequestStartedRef.current = true;
-    void loadAuthenticatedSvg(source)
+    void loadAuthenticatedSvg(displaySource)
       .then((result) => {
         if (!result || svgSourceKeyRef.current !== svgSourceKey) {
           return;
@@ -168,7 +265,7 @@ const AuthenticatedResourceImage = ({
       onError={loadSvgFallback}
       resizeMethod={Platform.OS === "android" ? "resize" : "auto"}
       resizeMode={resizeMode}
-      source={source}
+      source={displaySource}
       style={imageStyle}
     />
   );
@@ -197,10 +294,14 @@ export const MemoDetailModal = ({
   isSharing,
   memo,
   notebookName,
+  onAdoptCloudVersion,
   onClose,
+  onCopyLocalDraft,
   onDelete,
+  onDeleteResource,
   onRichEdit,
   onOpenRevisions,
+  onRenameResource,
   onResolveSyncConflict,
   onRestore,
   onShare,
@@ -214,146 +315,102 @@ export const MemoDetailModal = ({
   isSharing: boolean;
   memo: MemoDetail | null;
   notebookName: string;
+  onAdoptCloudVersion: (memo: MemoDetail) => void;
   onClose: () => void;
+  onCopyLocalDraft: (memo: MemoDetail) => void;
   onDelete: (memo: MemoDetail) => void;
+  onDeleteResource: (memo: MemoDetail, target: MobileResourceTarget) => Promise<void>;
   onRichEdit: (memo: MemoDetail) => void;
   onOpenRevisions: (memo: MemoDetail) => void;
+  onRenameResource: (memo: MemoDetail, target: MobileResourceTarget, filename: string) => Promise<void>;
   onResolveSyncConflict: (memo: MemoDetail) => void;
   onRestore: (memo: MemoDetail) => void;
   onShare: (memo: MemoDetail) => void;
   syncStatus: MobileSyncQueueItem["status"] | null;
   visible: boolean;
 }) => {
-  const { session } = useSession();
+  const { client, session } = useSession();
   const { resolvedTheme } = useMobileTheme();
   const { resolvedLocale } = useMobileLocale();
-  const { width: viewportWidth } = useWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
   const [actionsOpen, setActionsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchMatchCount, setSearchMatchCount] = useState(0);
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
-  const localePreference = useMobileLocalePreference();
-  const themedDetailMarkdownStyles = useMemo(
-    () => ({
-      ...resolveMobileThemeStyles(detailMarkdownStyles, resolvedTheme),
-      hr: {
-        ...detailMarkdownStyles.hr,
-        backgroundColor: MEMO_CONTENT_STYLE.divider.color[resolvedTheme],
-      },
-    }),
-    [resolvedTheme]
+  const [imagePreview, setImagePreview] = useState<{ alt: string; source: string } | null>(null);
+  const [resourceTarget, setResourceTarget] = useState<MobileResourceTarget | null>(null);
+  const [viewerReady, setViewerReady] = useState(false);
+  const viewerRef = useRef<LocalTiptapEditorRef>(null);
+  const resourceDataUrlCacheRef = useRef(new Map<string, Promise<string | null>>());
+
+  const baseUrl = session?.baseUrl.replace(/\/+$/, "") ?? "";
+  const viewerContent = useMemo<TiptapDoc>(
+    () => (memo ? resolveMemoContentDoc(memo.contentJson, memo.contentMarkdown) : { type: "doc", content: [{ type: "paragraph" }] }),
+    [memo]
   );
-  const detailMarkdownRules = useMemo<RenderRules>(() => {
-    const availableTableWidth = Math.max(0, viewportWidth - DETAIL_CONTENT_HORIZONTAL_PADDING * 2);
-    const getTableColumnCount = (node: ASTNode, parents: ASTNode[]) => {
-      const table = node.type === "table" ? node : parents.find((parent) => parent.type === "table");
-      const tableSection = table?.children.find((child) => child.type === "thead" || child.type === "tbody");
-      const firstRow = tableSection?.children.find((child) => child.type === "tr");
-      return Math.max(1, firstRow?.children.filter((child) => child.type === "th" || child.type === "td").length ?? 1);
-    };
-    const renderTableCell = (node: ASTNode, children: ReactNode[], parents: ASTNode[], markdownStyles: Record<string, StyleProp<ViewStyle>>, isHeader: boolean) => {
-      const columnCount = getTableColumnCount(node, parents);
-      const row = parents.find((parent) => parent.type === "tr");
-      const cellIndex = row?.children.findIndex((child) => child.key === node.key) ?? -1;
-      const isLastCell = cellIndex === (row?.children.length ?? 0) - 1;
-      const wideCellStyle = columnCount > DETAIL_TABLE_FIT_COLUMN_COUNT
-        ? { flex: 0, width: DETAIL_TABLE_MIN_COLUMN_WIDTH }
-        : undefined;
 
-      return (
-        <View
-          key={node.key}
-          style={[
-            markdownStyles[isHeader ? "_VIEW_SAFE_th" : "_VIEW_SAFE_td"],
-            wideCellStyle,
-            !isLastCell && markdownStyles._VIEW_SAFE_tableCellDivider,
-          ]}
-        >
-          {children}
-        </View>
+  const downloadResource = useCallback(async (target: MobileResourceTarget) => {
+    if (!client) throw new Error(resolvedLocale === "en-US" ? "The resource client is unavailable." : "当前无法读取资源。");
+    try {
+      await openMobileResource(client, target);
+    } catch (error) {
+      Alert.alert(
+        resolvedLocale === "en-US" ? "Unable to open resource" : "无法打开资源",
+        error instanceof Error ? error.message : (resolvedLocale === "en-US" ? "Try again later." : "请稍后重试。")
       );
-    };
+      throw error;
+    }
+  }, [client, resolvedLocale]);
+  const saveResourceAs = useCallback(async (target: MobileResourceTarget) => {
+    if (!client) throw new Error(resolvedLocale === "en-US" ? "The resource client is unavailable." : "当前无法读取资源。");
+    const result = await saveMobileResourceAs(client, target);
+    if (result.kind === "saf") {
+      Alert.alert(
+        resolvedLocale === "en-US" ? "Downloaded" : "下载成功",
+        resolvedLocale === "en-US" ? `Saved ${result.filename}` : `已保存：${result.filename}`
+      );
+    }
+  }, [client, resolvedLocale]);
 
-    const renderSelectableTextBlock = (
-      node: ASTNode,
-      children: ReactNode[],
-      markdownStyles: Record<string, StyleProp<ViewStyle>>,
-    ) => (
-      <RNText key={node.key} selectable style={markdownStyles[node.type] as StyleProp<TextStyle>}>
-        {children}
-      </RNText>
-    );
+  const loadViewerResource = useCallback((source: string) => {
+    if (!client) {
+      return Promise.resolve(null);
+    }
+    const path = normalizeProtectedResourcePath(source, session);
+    const cached = resourceDataUrlCacheRef.current.get(path);
+    if (cached) {
+      return cached;
+    }
+    const pending = client.getResourceBlob(path).then(blobToDataUrl).catch(() => null);
+    resourceDataUrlCacheRef.current.set(path, pending);
+    return pending;
+  }, [client, session]);
 
-    // Select complete block-level text nodes instead of every inline text group.
-    // Android then keeps dividers and other View-based blocks in the native layout
-    // while still exposing the system copy menu for normal note text.
-    return {
-      code_block: (node, _children, _parents, markdownStyles, inheritedStyles = {}) => (
-        <RNText key={node.key} selectable style={[inheritedStyles, markdownStyles.code_block]}>
-          {node.content.endsWith("\n") ? node.content.slice(0, -1) : node.content}
-        </RNText>
-      ),
-      fence: (node, _children, _parents, markdownStyles, inheritedStyles = {}) => {
-        const language = getMobileMarkdownFenceLanguage((node as ASTNode & { sourceInfo?: string }).sourceInfo);
-        const content = trimMobileMarkdownFenceContent(node.content);
-        if (language === "mermaid") {
-          return (
-            <MobileMermaidDiagram
-              key={node.key}
-              locale={resolvedLocale}
-              source={content}
-              theme={resolvedTheme}
-            />
-          );
-        }
-        return <RNText key={node.key} selectable style={[inheritedStyles, markdownStyles.fence]}>{content}</RNText>;
-      },
-      image: (node, _children, _parents, markdownStyles) => (
-        <AuthenticatedResourceImage
-          alt={String(node.attributes.alt ?? "")}
-          fitAspect
-          key={node.key}
-          resizeMode="contain"
-          source={getAuthenticatedResourceSource(String(node.attributes.src ?? ""), session)}
-          style={markdownStyles._VIEW_SAFE_image}
-        />
-      ),
-      heading1: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
-      heading2: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
-      heading3: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
-      heading4: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
-      heading5: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
-      heading6: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
-      paragraph: (node, children, _parents, markdownStyles) => renderSelectableTextBlock(node, children, markdownStyles),
-      table: (node, children, parents, markdownStyles) => {
-        const columnCount = getTableColumnCount(node, parents);
-        const tableWidth = columnCount > DETAIL_TABLE_FIT_COLUMN_COUNT
-          ? columnCount * DETAIL_TABLE_MIN_COLUMN_WIDTH
-          : availableTableWidth;
+  const onResourcePress = useCallback(async (targetJson: string) => {
+    const target = parseMobileResourceTargetJson(targetJson);
+    if (target) {
+      setResourceTarget(target);
+    }
+  }, []);
 
-        return (
-          <ScrollView
-            contentContainerStyle={markdownStyles._VIEW_SAFE_tableScrollContent}
-            horizontal
-            key={node.key}
-            nestedScrollEnabled
-            showsHorizontalScrollIndicator={columnCount > DETAIL_TABLE_FIT_COLUMN_COUNT}
-            style={markdownStyles._VIEW_SAFE_tableScroll}
-          >
-            <View style={[markdownStyles._VIEW_SAFE_table, { width: tableWidth }]}>{children}</View>
-          </ScrollView>
-        );
-      },
-      td: (node, children, parents, markdownStyles) => renderTableCell(node, children, parents, markdownStyles, false),
-      th: (node, children, parents, markdownStyles) => renderTableCell(node, children, parents, markdownStyles, true),
-    };
-  }, [resolvedLocale, resolvedTheme, session, viewportWidth]);
-  const detailText = memo
-    ? resolveMemoContentMarkdown(memo.contentJson, memo.contentMarkdown) || memo.contentText || "没有正文内容"
-    : "没有正文内容";
-  const searchMatches = useMemo(() => getTextSearchMatches(detailText, searchQuery), [detailText, searchQuery]);
-  const searchMatchLabel = searchQuery.trim() ? `${searchMatches.length > 0 ? activeMatchIndex + 1 : 0}/${searchMatches.length}` : "0/0";
+  const onImagePreview = useCallback(async (payloadJson: string) => {
+    try {
+      const parsed = JSON.parse(payloadJson) as { alt?: unknown; source?: unknown };
+      if (typeof parsed.source === "string" && parsed.source) {
+        setImagePreview({
+          alt: typeof parsed.alt === "string" ? parsed.alt : "",
+          source: parsed.source,
+        });
+      }
+    } catch {
+      // Ignore malformed bridge payloads.
+    }
+  }, []);
+
+  const searchMatchLabel = searchQuery.trim()
+    ? `${searchMatchCount > 0 ? activeMatchIndex + 1 : 0}/${searchMatchCount}`
+    : "0/0";
   const syncStatusLabel = isSaving || syncStatus === "syncing"
     ? "保存中"
     : syncStatus === "conflict"
@@ -369,15 +426,28 @@ export const MemoDetailModal = ({
   ) + 16;
 
   useEffect(() => {
+    setViewerReady(false);
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchMatchCount(0);
     setActiveMatchIndex(0);
-  }, [detailText, searchQuery]);
+    setImagePreview(null);
+    setResourceTarget(null);
+    resourceDataUrlCacheRef.current.clear();
+  }, [memo?.id]);
 
-  const moveSearchMatch = (direction: 1 | -1) => {
-    if (searchMatches.length === 0) {
+  useEffect(() => {
+    if (!viewerReady || !searchOpen) {
       return;
     }
+    viewerRef.current?.search(searchQuery, activeMatchIndex);
+  }, [activeMatchIndex, searchOpen, searchQuery, viewerReady]);
 
-    setActiveMatchIndex((current) => (current + direction + searchMatches.length) % searchMatches.length);
+  const moveSearchMatch = (direction: 1 | -1) => {
+    if (searchMatchCount === 0) {
+      return;
+    }
+    setActiveMatchIndex((current) => (current + direction + searchMatchCount) % searchMatchCount);
   };
 
   const closeActionsAndRun = (action: () => void) => {
@@ -428,6 +498,16 @@ export const MemoDetailModal = ({
                 <History color="#475569" size={20} />
               </Pressable>
             ) : null}
+            {memo && !memo.isDeleted ? (
+              <Pressable
+                accessibilityLabel="搜索当前笔记"
+                accessibilityRole="button"
+                onPress={() => setSearchOpen(true)}
+                style={styles.detailHeaderIconButton}
+              >
+                <Search color="#475569" size={20} />
+              </Pressable>
+            ) : null}
             {memo?.isDeleted ? (
               <Pressable accessibilityLabel="笔记操作" accessibilityRole="button" onPress={() => setActionsOpen(true)} style={styles.detailHeaderIconButton}>
                 <MoreHorizontal color="#475569" size={21} />
@@ -436,70 +516,145 @@ export const MemoDetailModal = ({
           </View>
         </View>
 
+        {syncStatus === "conflict" && memo ? (
+          <View style={styles.conflictBanner}>
+            <Text style={styles.conflictBannerText}>
+              云端笔记已在其他标签页、设备，或离线期间被更新。可先复制本地草稿，再采用云端版本后继续编辑。
+            </Text>
+            <View style={styles.conflictBannerActions}>
+              <Pressable
+                accessibilityLabel="采用云端并重新加载"
+                accessibilityRole="button"
+                onPress={() => onAdoptCloudVersion(memo)}
+                style={styles.conflictBannerPrimaryButton}
+              >
+                <Text style={styles.conflictBannerPrimaryButtonText}>采用云端并重新加载</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="复制本地草稿"
+                accessibilityRole="button"
+                onPress={() => onCopyLocalDraft(memo)}
+                style={styles.conflictBannerSecondaryButton}
+              >
+                <Text style={styles.conflictBannerSecondaryButtonText}>复制本地草稿</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="查看并处理同步冲突"
+                accessibilityRole="button"
+                onPress={() => onResolveSyncConflict(memo)}
+                style={styles.conflictBannerSecondaryButton}
+              >
+                <Text style={styles.conflictBannerSecondaryButtonText}>更多</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
         {isLoading ? (
           <View style={styles.centerState}>
             <ActivityIndicator color="#0f172a" />
           </View>
         ) : memo ? (
-          <ScrollView contentContainerStyle={styles.detailContent}>
-            <Text selectable style={styles.detailTitle}>{memo.title?.trim() || DEFAULT_MEMO_TITLE}</Text>
-            <View style={styles.detailMetaRow}>
-              <View style={styles.detailNotebookButton}>
-                <Text numberOfLines={1} selectable style={styles.detailNotebookName}>{notebookName}</Text>
-                <ChevronDown color="#94a3b8" size={14} />
+          <View style={detailLayoutStyles.body}>
+            <View style={detailLayoutStyles.meta}>
+              <Text selectable style={styles.detailTitle}>{memo.title?.trim() || DEFAULT_MEMO_TITLE}</Text>
+              <View style={styles.detailMetaRow}>
+                <View style={styles.detailNotebookButton}>
+                  <Text numberOfLines={1} selectable style={styles.detailNotebookName}>{notebookName}</Text>
+                  <ChevronDown color="#94a3b8" size={14} />
+                </View>
+                <View style={styles.detailTagsGroup}>
+                  <Tag color="#64748b" size={16} />
+                  <Text
+                    numberOfLines={1}
+                    selectable
+                    style={[styles.detailTagsInline, memo.tags.length === 0 && styles.detailTagsPlaceholder]}
+                  >
+                    {memo.tags.length ? memo.tags.join(", ") : "添加标签，用逗号分隔"}
+                  </Text>
+                </View>
               </View>
-              <View style={styles.detailTagsGroup}>
-                <Tag color="#64748b" size={16} />
-                <Text
-                  numberOfLines={1}
-                  selectable
-                  style={[styles.detailTagsInline, memo.tags.length === 0 && styles.detailTagsPlaceholder]}
-                >
-                  {memo.tags.length ? memo.tags.join(", ") : "添加标签，用逗号分隔"}
-                </Text>
-              </View>
+              {searchOpen ? (
+                <View style={styles.noteSearchPanel}>
+                  <View style={styles.searchBox}>
+                    <Search color="#64748b" size={18} />
+                    <TextInput
+                      accessibilityLabel="在当前笔记内搜索"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      onChangeText={(value) => {
+                        setSearchQuery(value);
+                        setActiveMatchIndex(0);
+                      }}
+                      placeholder="在当前笔记内搜索"
+                      placeholderTextColor="#94a3b8"
+                      style={styles.searchInput}
+                      value={searchQuery}
+                    />
+                    <Text style={[styles.noteSearchCount, searchQuery.trim() && searchMatchCount === 0 && styles.noteSearchCountEmpty]}>{searchMatchLabel}</Text>
+                  </View>
+                  <View style={styles.richEditorSearchActions}>
+                    <DetailActionButton disabled={searchMatchCount === 0} label="上一个搜索结果" onPress={() => moveSearchMatch(-1)}>
+                      <ChevronLeft color={searchMatchCount === 0 ? "#cbd5e1" : "#0f172a"} size={16} />
+                    </DetailActionButton>
+                    <DetailActionButton disabled={searchMatchCount === 0} label="下一个搜索结果" onPress={() => moveSearchMatch(1)}>
+                      <ChevronRight color={searchMatchCount === 0 ? "#cbd5e1" : "#0f172a"} size={16} />
+                    </DetailActionButton>
+                    <DetailActionButton label="关闭搜索" onPress={() => {
+                      setSearchOpen(false);
+                      setSearchQuery("");
+                      setSearchMatchCount(0);
+                      setActiveMatchIndex(0);
+                      viewerRef.current?.search("", 0);
+                    }}>
+                      <X color="#0f172a" size={16} />
+                    </DetailActionButton>
+                  </View>
+                </View>
+              ) : null}
+              <View style={styles.detailDivider} />
             </View>
-            {searchOpen ? (
-              <View style={styles.noteSearchPanel}>
-                <View style={styles.searchBox}>
-                  <Search color="#64748b" size={18} />
-                  <TextInput
-                    accessibilityLabel="在当前笔记内搜索"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    onChangeText={setSearchQuery}
-                    placeholder="在当前笔记内搜索"
-                    placeholderTextColor="#94a3b8"
-                    style={styles.searchInput}
-                    value={searchQuery}
-                  />
-                  <Text style={[styles.noteSearchCount, searchQuery.trim() && searchMatches.length === 0 && styles.noteSearchCountEmpty]}>{searchMatchLabel}</Text>
-                </View>
-                <View style={styles.richEditorSearchActions}>
-                  <DetailActionButton disabled={searchMatches.length === 0} label="上一个搜索结果" onPress={() => moveSearchMatch(-1)}>
-                    <ChevronLeft color={searchMatches.length === 0 ? "#cbd5e1" : "#0f172a"} size={16} />
-                  </DetailActionButton>
-                  <DetailActionButton disabled={searchMatches.length === 0} label="下一个搜索结果" onPress={() => moveSearchMatch(1)}>
-                    <ChevronRight color={searchMatches.length === 0 ? "#cbd5e1" : "#0f172a"} size={16} />
-                  </DetailActionButton>
-                  <DetailActionButton label="关闭搜索" onPress={() => {
-                    setSearchOpen(false);
-                    setSearchQuery("");
-                  }}>
-                    <X color="#0f172a" size={16} />
-                  </DetailActionButton>
-                </View>
+            {baseUrl ? (
+              <LocalTiptapEditor
+                key={memo.id}
+                baseUrl={baseUrl}
+                content={viewerContent}
+                dom={{
+                  bounces: true,
+                  contentInsetAdjustmentBehavior: "never",
+                  overScrollMode: "never",
+                  scrollEnabled: false,
+                  style: [
+                    detailLayoutStyles.viewer,
+                    resolvedTheme === "dark" ? detailLayoutStyles.viewerDark : null,
+                  ],
+                }}
+                locale={resolvedLocale}
+                mode="viewer"
+                onImagePreview={onImagePreview}
+                onLoadResource={loadViewerResource}
+                onReady={async () => {
+                  setViewerReady(true);
+                }}
+                onResourcePress={onResourcePress}
+                onSearchResult={async (count, index) => {
+                  setSearchMatchCount(count);
+                  setActiveMatchIndex(count > 0 ? index : 0);
+                }}
+                ref={viewerRef}
+                theme={resolvedTheme}
+              />
+            ) : (
+              <View style={styles.centerState}>
+                <Text style={styles.errorText}>{resolvedLocale === "en-US" ? "Not signed in." : "未登录。"}</Text>
+              </View>
+            )}
+            {!viewerReady ? (
+              <View pointerEvents="none" style={detailLayoutStyles.viewerLoading}>
+                <ActivityIndicator color="#0f172a" />
               </View>
             ) : null}
-            <View style={styles.detailDivider} />
-            {searchOpen && searchQuery.trim() ? (
-              <HighlightedDetailText activeIndex={activeMatchIndex} matches={searchMatches} text={detailText} />
-            ) : (
-              <MobileMermaidProvider theme={resolvedTheme}>
-                <Markdown rules={detailMarkdownRules} style={themedDetailMarkdownStyles}>{detailText}</Markdown>
-              </MobileMermaidProvider>
-            )}
-          </ScrollView>
+          </View>
         ) : (
           <View style={styles.centerState}>
             <Text style={styles.errorText}>笔记加载失败</Text>
@@ -535,160 +690,96 @@ export const MemoDetailModal = ({
             </Pressable>
           </Modal>
         ) : null}
+        <Modal animationType="fade" onRequestClose={() => setImagePreview(null)} transparent visible={Boolean(imagePreview)}>
+          <View style={resourceImageStyles.previewBackdrop}>
+            {imagePreview ? (
+              <AuthenticatedResourceImage
+                alt={imagePreview.alt}
+                href={imagePreview.source}
+                loadResourceBlob={client?.getResourceBlob}
+                resizeMode="contain"
+                session={session}
+                style={resourceImageStyles.previewImage}
+              />
+            ) : null}
+            <Pressable
+              accessibilityLabel={resolvedLocale === "en-US" ? "Close image preview" : "关闭图片预览"}
+              accessibilityRole="button"
+              onPress={() => setImagePreview(null)}
+              style={resourceImageStyles.previewClose}
+            >
+              <X color="#ffffff" size={24} />
+            </Pressable>
+          </View>
+        </Modal>
+        <MobileResourceActions
+          canMutate={Boolean(memo && !memo.isDeleted && !memo.id.startsWith("local:"))}
+          onClose={() => setResourceTarget(null)}
+          onDelete={async (target) => {
+            if (!memo) return;
+            await onDeleteResource(memo, target);
+          }}
+          onDownload={downloadResource}
+          onRename={async (target, filename) => {
+            if (!memo) return;
+            await onRenameResource(memo, target, filename);
+          }}
+          onSaveAs={saveResourceAs}
+          target={resourceTarget}
+        />
       </SafeAreaView>
     </Modal>
   );
 };
 
-const HighlightedDetailText = ({
-  activeIndex,
-  matches,
-  text,
-}: {
-  activeIndex: number;
-  matches: Array<{ end: number; start: number }>;
-  text: string;
-}) => {
-  if (matches.length === 0) {
-    return <Text selectable style={styles.detailMarkdown}>{text}</Text>;
-  }
-
-  const segments: ReactNode[] = [];
-  let cursor = 0;
-
-  matches.forEach((match, index) => {
-    if (match.start > cursor) {
-      segments.push(text.slice(cursor, match.start));
-    }
-
-    segments.push(
-      <Text key={`${match.start}-${match.end}`} style={index === activeIndex ? styles.noteSearchHighlightActive : styles.noteSearchHighlight}>
-        {text.slice(match.start, match.end)}
-      </Text>
-    );
-    cursor = match.end;
-  });
-
-  if (cursor < text.length) {
-    segments.push(text.slice(cursor));
-  }
-
-  return <Text selectable style={styles.detailMarkdown}>{segments}</Text>;
-};
-
-
-const detailMarkdownStyles = StyleSheet.create({
+const detailLayoutStyles = StyleSheet.create({
   body: {
-    color: "#0f172a",
-    fontSize: MEMO_CONTENT_STYLE.body.fontSize,
-    lineHeight: MEMO_CONTENT_STYLE.body.lineHeight,
+    flex: 1,
+    minHeight: 0,
   },
-  blockquote: {
-    backgroundColor: "#f8fafc",
-    borderLeftColor: "#94a3b8",
-    borderLeftWidth: 3,
-    marginVertical: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+  meta: {
+    paddingBottom: 0,
+    paddingHorizontal: 16,
+    paddingTop: 16,
   },
-  bullet_list: {
-    marginVertical: 8,
-  },
-  code_inline: {
-    backgroundColor: "#f1f5f9",
-    borderRadius: 4,
-    color: "#334155",
-    fontSize: 15,
-  },
-  fence: {
-    backgroundColor: "#0f172a",
-    borderColor: "#0f172a",
-    borderRadius: 8,
-    color: "#e2e8f0",
-    fontSize: 14,
-    marginVertical: 10,
-    padding: 12,
-  },
-  heading1: {
-    color: "#0f172a",
-    fontSize: 26,
-    fontWeight: "800",
-    lineHeight: 34,
-    marginBottom: 10,
-    marginTop: 14,
-  },
-  heading2: {
-    color: "#0f172a",
-    fontSize: 21,
-    fontWeight: "800",
-    lineHeight: 29,
-    marginBottom: 8,
-    marginTop: 18,
-  },
-  heading3: {
-    color: "#0f172a",
-    fontSize: 18,
-    fontWeight: "800",
-    lineHeight: 26,
-    marginBottom: 6,
-    marginTop: 14,
-  },
-  hr: {
-    backgroundColor: MEMO_CONTENT_STYLE.divider.color.light,
-    height: MEMO_CONTENT_STYLE.divider.thickness,
-    marginVertical: MEMO_CONTENT_STYLE.divider.marginVertical,
-  },
-  link: {
-    color: "#059669",
-  },
-  list_item: {
-    marginVertical: 3,
-  },
-  ordered_list: {
-    marginVertical: 8,
-  },
-  paragraph: {
-    marginBottom: 10,
-    marginTop: 0,
-  },
-  strong: {
-    fontWeight: "800",
-  },
-  table: {
+  viewer: {
     backgroundColor: "#ffffff",
-    borderColor: "#d8d8d8",
-    borderRadius: 2,
-    borderWidth: 1,
-    overflow: "hidden",
-  },
-  tableCellDivider: {
-    borderRightColor: "#dedede",
-    borderRightWidth: 1,
-  },
-  tableScroll: {
-    marginBottom: 10,
-    marginTop: 10,
-    maxWidth: "100%",
-  },
-  tableScrollContent: {
-    flexGrow: 1,
-  },
-  td: {
     flex: 1,
-    minWidth: 0,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    minHeight: 0,
   },
-  th: {
-    backgroundColor: "#f2f2f2",
+  viewerDark: {
+    backgroundColor: "#0f172a",
+  },
+  viewerLoading: {
+    ...StyleSheet.absoluteFill,
+    alignItems: "center",
+    backgroundColor: "rgba(248,250,252,0.72)",
+    justifyContent: "center",
+    top: 120,
+  },
+});
+
+const resourceImageStyles = StyleSheet.create({
+  previewBackdrop: {
+    alignItems: "center",
+    backgroundColor: "rgba(2,6,23,0.96)",
     flex: 1,
-    minWidth: 0,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    justifyContent: "center",
+    padding: 16,
   },
-  tr: {
-    borderBottomColor: "#dedede",
-    borderBottomWidth: 1,
-    flexDirection: "row",
+  previewClose: {
+    alignItems: "center",
+    backgroundColor: "rgba(15,23,42,0.78)",
+    borderRadius: 999,
+    height: 46,
+    justifyContent: "center",
+    position: "absolute",
+    right: 18,
+    top: 54,
+    width: 46,
+  },
+  previewImage: {
+    height: "100%",
+    width: "100%",
   },
 });

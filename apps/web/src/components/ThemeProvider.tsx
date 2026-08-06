@@ -21,7 +21,7 @@ export const MERMAID_THEME_NAMES = [
 ] as const;
 export type MermaidThemeName = (typeof MERMAID_THEME_NAMES)[number];
 
-interface MermaidThemePalette {
+export interface MermaidThemePalette {
   bg: string;
   fg: string;
   line?: string;
@@ -141,31 +141,34 @@ const getSystemTheme = () =>
 const resolveTheme = (preference: ThemePreference): ResolvedTheme =>
   preference === "system" ? getSystemTheme() : preference;
 
-export const getStoredThemePreference = (): ThemePreference => {
-  if (typeof window === "undefined") {
-    return "system";
+// localStorage can be missing or blocked in restricted browsers, private mode,
+// and unit tests that stub `window` without a storage implementation.
+const readLocalStorageItem = (key: string): string | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage?.getItem(key) ?? null;
+  } catch {
+    return null;
   }
+};
 
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+export const getStoredThemePreference = (): ThemePreference => {
+  const stored = readLocalStorageItem(THEME_STORAGE_KEY);
   return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
 };
 
 export const getStoredMermaidTheme = (): MermaidThemeName => {
-  if (typeof window === "undefined") return "zinc-light";
-  const stored = window.localStorage.getItem(MERMAID_THEME_STORAGE_KEY);
+  const stored = readLocalStorageItem(MERMAID_THEME_STORAGE_KEY);
   return MERMAID_THEME_NAMES.includes(stored as MermaidThemeName) ? stored as MermaidThemeName : "zinc-light";
 };
 
 export const getStoredMermaidRenderer = (): MermaidRenderer => {
-  if (typeof window === "undefined") return "mermaid";
-  const stored = window.localStorage.getItem(MERMAID_RENDERER_STORAGE_KEY);
-  return MERMAID_RENDERERS.includes(stored as MermaidRenderer) ? stored as MermaidRenderer : "mermaid";
+  const stored = readLocalStorageItem(MERMAID_RENDERER_STORAGE_KEY);
+  return MERMAID_RENDERERS.includes(stored as MermaidRenderer) ? stored as MermaidRenderer : "beautiful";
 };
 
 export const getStoredEditorTheme = (): string => {
-  if (typeof window === "undefined") return "default";
-  const stored = window.localStorage.getItem(EDITOR_THEME_STORAGE_KEY);
-  return stored || "default";
+  return readLocalStorageItem(EDITOR_THEME_STORAGE_KEY) || "default";
 };
 
 const isHexColor = (value: unknown): value is string => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);

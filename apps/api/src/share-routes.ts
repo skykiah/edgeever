@@ -5,6 +5,7 @@ import { audit } from "./audit";
 import { randomToken } from "./auth-crypto";
 import { createId, isoNow, parseJsonArray } from "./entity-utils";
 import { notFound } from "./http-errors";
+import { resolveObjectStorage } from "./object-storage";
 import { getAuditActor, getWorkspaceId, requireUser } from "./request-auth";
 
 const SHARE_TOKEN_BYTES = 32;
@@ -20,6 +21,7 @@ type PublicMemoShareRow = {
 };
 type SharedResourceRow = {
   object_key: string;
+  storage_config_id: string;
   kind: "image" | "attachment";
   mime_type: string | null;
   filename: string | null;
@@ -79,7 +81,7 @@ export const registerPublicShareRoutes = (app: Hono<AppEnv>) => {
     if (!token) return notFound(c, "Shared resource not found");
 
     const resource = await c.env.storage.db.prepare(
-      `SELECT r.object_key, r.kind, r.mime_type, r.filename
+      `SELECT r.object_key, r.storage_config_id, r.kind, r.mime_type, r.filename
        FROM memo_shares ms
        INNER JOIN memos m ON m.id = ms.memo_id AND m.workspace_id = ms.workspace_id
        INNER JOIN resources r ON r.memo_id = m.id
@@ -88,7 +90,8 @@ export const registerPublicShareRoutes = (app: Hono<AppEnv>) => {
     ).bind(token, c.req.param("resourceId")).first<SharedResourceRow>();
     if (!resource) return notFound(c, "Shared resource not found");
 
-    const object = await c.env.storage.resources.get(resource.object_key);
+    const source = await resolveObjectStorage(c.env, resource.storage_config_id);
+    const object = await source.store.get(resource.object_key);
     if (!object) return notFound(c, "Shared resource not found");
 
     const headers = new Headers();

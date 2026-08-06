@@ -13,6 +13,8 @@ const getPublicShareUrl = (token: string) => {
   return `${baseUrl.replace(/\/$/, "")}/share/${encodeURIComponent(token)}`;
 };
 
+export const memoShareQueryKey = (memoId: string) => ["memo-share", memoId] as const;
+
 export const ShareMemoDialog = ({
   memoId,
   open,
@@ -26,7 +28,7 @@ export const ShareMemoDialog = ({
   const queryClient = useQueryClient();
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const copyResetTimerRef = useRef<number | null>(null);
-  const queryKey = ["memo-share", memoId] as const;
+  const queryKey = memoShareQueryKey(memoId);
   const shareQuery = useQuery({
     queryKey,
     queryFn: () => api.getMemoShare(memoId),

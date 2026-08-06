@@ -31,6 +31,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { NotebookTreeItem } from "./NotebookTreeItem";
@@ -46,12 +47,24 @@ import {
   readNotebookSortPreference,
   writeNotebookSortPreference,
 } from "@/lib/app-helpers";
-import { usePwaInstall } from "./PwaInstallContext";
 import type { EdgeEverRepository } from "@/lib/repository";
 import { statusSettleMotion } from "@/lib/motion";
 
 const NOTEBOOK_DRAG_SCROLL_EDGE_PX = 56;
 const NOTEBOOK_DRAG_SCROLL_MAX_STEP_PX = 18;
+const DESKTOP_DOWNLOAD_URL = "https://github.com/tianma-if/edgeever/releases/latest";
+const CHROMIUM_CLIPPER_URL = "https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo";
+const FIREFOX_CLIPPER_URL = "https://addons.mozilla.org/firefox/addon/edgeever-web-clipper/";
+
+const BrowserBrandIcon = ({ path, color }: { path: string; color: string }) => (
+  <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true" style={{ color }}>
+    <path fill="currentColor" d={path} />
+  </svg>
+);
+
+const CHROME_ICON_PATH = "M12 0C8.21 0 4.831 1.757 2.632 4.501l3.953 6.848A5.454 5.454 0 0 1 12 6.545h10.691A12 12 0 0 0 12 0M1.931 5.47A11.94 11.94 0 0 0 0 12c0 6.012 4.42 10.991 10.189 11.864l3.953-6.847a5.45 5.45 0 0 1-6.865-2.29zm13.342 2.166a5.446 5.446 0 0 1 1.45 7.09l.002.001h-.002l-5.344 9.257q.309.015.621.016c6.627 0 12-5.373 12-12c0-1.54-.29-3.011-.818-4.364zM12 16.364a4.364 4.364 0 1 1 0-8.728a4.364 4.364 0 0 1 0 8.728";
+const EDGE_ICON_PATH = "M21.86 17.86q.14 0 .25.12q.1.13.1.25t-.11.33l-.32.46l-.43.53l-.44.5q-.21.25-.38.42l-.22.23q-.58.53-1.34 1.04t-1.6.91q-.86.4-1.74.64t-1.67.24q-.9 0-1.69-.28q-.8-.28-1.48-.78T9.57 21.3q-.53-.66-.92-1.44q-.38-.77-.58-1.6t-.2-1.67q0-1 .32-1.96q.33-.97.87-1.8q.14.95.55 1.77t1.02 1.5q.6.68 1.38 1.21q.78.54 1.64.9t1.77.56q.92.2 1.8.2q1.12 0 2.18-.24q1.06-.23 2.06-.72l.2-.1zm-15.5-1.27q0 1.1.27 2.15q.27 1.06.78 2.03q.51.96 1.24 1.77q.74.82 1.66 1.4q-1.47-.2-2.8-.74q-1.33-.55-2.48-1.37q-1.15-.83-2.08-1.9q-.92-1.07-1.58-2.33T.36 14.94Q0 13.54 0 12.06q0-.81.32-1.49q.31-.68.83-1.23q.53-.55 1.2-.96q.66-.4 1.35-.66q.74-.27 1.5-.39q.78-.12 1.55-.12q.7 0 1.42.1q.72.12 1.4.35t1.32.57q.63.35 1.16.83q-.35 0-.7.07q-.33.07-.65.23v-.02q-.63.28-1.2.74t-1.05 1.04t-.87 1.26q-.38.67-.65 1.39q-.27.71-.42 1.44q-.15.72-.15 1.38M11.96.06q1.7 0 3.33.39q1.63.38 3.07 1.15q1.43.77 2.62 1.93q1.18 1.16 1.98 2.7q.49.94.76 1.96q.28 1 .28 2.08q0 .89-.23 1.7q-.24.8-.69 1.48t-1.1 1.22q-.64.53-1.45.88q-.54.24-1.11.36q-.58.13-1.16.13q-.42 0-.97-.03q-.54-.03-1.1-.12q-.55-.1-1.05-.28q-.5-.19-.84-.5q-.12-.09-.23-.24q-.1-.16-.1-.33q0-.15.16-.35t.35-.5q.2-.28.36-.68t.16-.95q0-1.06-.4-1.96q-.4-.91-1.06-1.64q-.66-.74-1.52-1.28q-.86-.55-1.79-.89q-.84-.3-1.72-.44q-.87-.14-1.76-.14q-1.55 0-3.06.45T.94 7.55q.71-1.74 1.81-3.13q1.1-1.38 2.52-2.35Q6.68 1.1 8.37.58q1.7-.52 3.58-.52Z";
+const FIREFOX_ICON_PATH = "M8.824 7.287c.008 0 .004 0 0 0m-2.8-1.4c.006 0 .003 0 0 0m16.754 2.161c-.505-1.215-1.53-2.528-2.333-2.943c.654 1.283 1.033 2.57 1.177 3.53l.002.02c-1.314-3.278-3.544-4.6-5.366-7.477c-.091-.147-.184-.292-.273-.446a4 4 0 0 1-.13-.24a2 2 0 0 1-.172-.46a.03.03 0 0 0-.027-.03a.04.04 0 0 0-.021 0l-.006.001l-.01.005l.005-.008c-2.585 1.515-3.657 4.168-3.932 5.856a6.2 6.2 0 0 0-2.305.587a.297.297 0 0 0-.147.37c.057.162.24.24.396.17a5.6 5.6 0 0 1 2.008-.523l.067-.005a5.9 5.9 0 0 1 1.957.222l.095.03a6 6 0 0 1 .616.228q.12.054.238.112l.107.055a6 6 0 0 1 .368.211a5.95 5.95 0 0 1 2.034 2.104c-.62-.437-1.733-.868-2.803-.681c4.183 2.09 3.06 9.292-2.737 9.02a5.2 5.2 0 0 1-1.513-.292a4 4 0 0 1-.538-.232c-1.42-.735-2.593-2.121-2.74-3.806c0 0 .537-2 3.845-2c.357 0 1.38-.998 1.398-1.287c-.005-.095-2.029-.9-2.817-1.677c-.422-.416-.622-.616-.8-.767a4 4 0 0 0-.301-.227a5.4 5.4 0 0 1-.032-2.842c-1.195.544-2.124 1.403-2.8 2.163h-.006c-.46-.584-.428-2.51-.402-2.913c-.006-.025-.343.176-.389.206a8.4 8.4 0 0 0-1.136.974q-.596.606-1.085 1.303a9.8 9.8 0 0 0-1.562 3.52c-.003.013-.11.487-.19 1.073q-.02.135-.037.272a8 8 0 0 0-.069.667l-.002.034l-.023.387l-.001.06C.386 18.795 5.593 24 12.016 24c5.752 0 10.527-4.176 11.463-9.661q.028-.223.052-.448c.232-1.994-.025-4.09-.753-5.844z";
 
 const SidebarNavButton = ({
   active = false,
@@ -329,10 +342,6 @@ export const NotebookPane = ({
   const { t } = useTranslation();
   // Temporarily keep template actions out of the primary workspace navigation.
   const showTemplateEntry = true;
-  const { isInstallable, install } = usePwaInstall();
-  const clipperInstallUrl = typeof navigator !== "undefined" && /Firefox\//.test(navigator.userAgent)
-    ? "https://github.com/tianma-if/edgeever/tree/main/apps/extension#firefox"
-    : "https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo";
   const notebookScrollRef = useRef<HTMLDivElement | null>(null);
   const notebookDragScrollFrameRef = useRef<number | null>(null);
   const [expandSiblingsRequest, setExpandSiblingsRequest] = useState<{ parentId: string | null; token: number } | null>(null);
@@ -460,23 +469,13 @@ export const NotebookPane = ({
         </div>
       )}
 
-      <div
-        ref={notebookScrollRef}
-        className="flex-1 overflow-y-auto px-3 py-4"
-        onDragEnd={stopNotebookDragAutoScroll}
-        onDragLeave={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-            stopNotebookDragAutoScroll();
-          }
-        }}
-        onDragOver={handleNotebookScrollDragOver}
-        onDrop={stopNotebookDragAutoScroll}
-      >
-        <div className="mb-4 hidden overflow-hidden rounded-full border border-slate-200 bg-white shadow-[0_8px_22px_rgba(15,23,42,0.06)] lg:flex">
+      <div className="hidden shrink-0 px-3 pb-4 pt-4 lg:block">
+        <div className="flex overflow-hidden rounded-full border border-slate-200 bg-white shadow-[0_8px_22px_rgba(15,23,42,0.06)]">
           <button
-            className="flex h-14 min-w-0 flex-1 items-center gap-3 px-3 text-left transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="group flex h-14 min-w-0 flex-1 items-center gap-3 px-3 text-left transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             type="button"
             title={t("notebookPane.newMemo")}
+            aria-label={t("notebookPane.newMemo")}
             onClick={onCreateMemo}
             disabled={!canCreateMemo || isCreatingMemo}
           >
@@ -486,6 +485,20 @@ export const NotebookPane = ({
             <span className="min-w-0 truncate text-sm font-semibold text-slate-950">{t("notebookPane.newMemo")}</span>
           </button>
         </div>
+      </div>
+
+      <div
+        ref={notebookScrollRef}
+        className="flex-1 overflow-y-auto px-3 py-4 lg:pt-0"
+        onDragEnd={stopNotebookDragAutoScroll}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            stopNotebookDragAutoScroll();
+          }
+        }}
+        onDragOver={handleNotebookScrollDragOver}
+        onDrop={stopNotebookDragAutoScroll}
+      >
         {showTemplateEntry && (
           <button
             className="mb-3 hidden h-8 w-full items-center justify-start gap-2 rounded-md px-3 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50 lg:flex"
@@ -582,34 +595,63 @@ export const NotebookPane = ({
 
       <footer className="border-t border-slate-200 bg-white/80 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur-sm">
         <div className="space-y-1">
-          {isInstallable && (
-            <button
-              onClick={install}
-              className="flex h-8 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-semibold leading-none text-emerald-700 hover:bg-emerald-50 transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70"
-              type="button"
-              title={t("pwa.sidebarInstallTitle") || "安装桌面客户端"}
-              aria-label={t("pwa.sidebarInstallTitle") || "安装桌面客户端"}
-            >
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                <Download className="h-4 w-4 text-emerald-600" />
-              </span>
-              <span className="min-w-0 flex-1 truncate">{t("pwa.sidebarInstall") || "安装桌面客户端"}</span>
-            </button>
-          )}
-          {demoMode && (
+          {!window.edgeeverDesktop?.isAvailable && (
             <a
-              href={clipperInstallUrl}
+              href={DESKTOP_DOWNLOAD_URL}
               target="_blank"
               rel="noreferrer"
-              className="flex h-8 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium leading-none text-slate-500 transition-colors duration-200 hover:bg-slate-50 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70"
-              title={t("pwa.sidebarClipperTitle") || "安装 EdgeEver 浏览器剪藏插件"}
-              aria-label={t("pwa.sidebarClipperTitle") || "安装 EdgeEver 浏览器剪藏插件"}
+              className="flex min-h-11 w-full items-start gap-3 rounded-md px-3 py-2 text-left text-emerald-700 transition-colors duration-200 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70"
+              title={t("pwa.sidebarInstallTitle") || "下载 EdgeEver 桌面客户端"}
+              aria-label={t("pwa.sidebarInstallTitle") || "下载 EdgeEver 桌面客户端"}
             >
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                <ExternalLink className="h-3.5 w-3.5 text-slate-400" />
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center mt-0.5">
+                <Download className="h-4 w-4 text-emerald-600" />
               </span>
-              <span className="min-w-0 flex-1 truncate">{t("pwa.sidebarClipper") || "安装浏览器剪藏插件"}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold leading-4">
+                  {t("pwa.sidebarInstall") || "下载桌面客户端"}
+                </span>
+                <span className="mt-1 block truncate whitespace-nowrap text-[11px] font-normal leading-4 text-slate-400">
+                  {t("pwa.sidebarInstallAvailability") || "Mac 可用 · Windows 敬请期待"}
+                </span>
+              </span>
             </a>
+          )}
+          {demoMode && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="flex h-8 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium leading-none text-slate-500 transition-colors duration-200 hover:bg-slate-50 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70"
+                  type="button"
+                  title={t("pwa.sidebarClipperTitle") || "安装 EdgeEver 浏览器剪藏插件"}
+                  aria-label={t("pwa.sidebarClipperTitle") || "安装 EdgeEver 浏览器剪藏插件"}
+                >
+                  <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                    <ExternalLink className="h-3.5 w-3.5 text-slate-400" />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{t("pwa.sidebarClipper") || "安装浏览器剪藏插件"}</span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="top" className="w-52">
+                <DropdownMenuItem asChild>
+                  <a className="gap-2" href={CHROMIUM_CLIPPER_URL} target="_blank" rel="noreferrer">
+                    <span className="flex w-9 items-center gap-1">
+                      <BrowserBrandIcon path={CHROME_ICON_PATH} color="#4285F4" />
+                      <BrowserBrandIcon path={EDGE_ICON_PATH} color="#0C59A4" />
+                    </span>
+                    <span>Chrome / Edge</span>
+                  </a>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <a className="gap-2" href={FIREFOX_CLIPPER_URL} target="_blank" rel="noreferrer">
+                    <span className="flex w-9 items-center">
+                      <BrowserBrandIcon path={FIREFOX_ICON_PATH} color="#FF7139" />
+                    </span>
+                    <span>Firefox</span>
+                  </a>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
           <button
             onClick={onOpenSettings}

@@ -21,6 +21,7 @@ export type DesktopRpcMethod =
   | "template.delete"
   | "resource.list"
   | "resource.cache"
+  | "resource.delete"
   | "tag.list"
   | "tag.rename"
   | "tag.delete"
@@ -86,6 +87,7 @@ export type DesktopRpcResponses = {
   "template.delete": { ok: true };
   "resource.list": { resources: ResourceListItem[]; summary: ResourceStorageSummary };
   "resource.cache": { ok: true };
+  "resource.delete": { ok: true };
   "tag.list": { tags: import("./types").TagSummary[] };
   "tag.rename": { ok: true; updated: number };
   "tag.delete": { ok: true; updated: number };
@@ -131,6 +133,7 @@ export type DesktopRpcParams = {
   "template.delete": { templateId: string };
   "resource.list": { limit?: number };
   "resource.cache": { resource: import("./types").Resource };
+  "resource.delete": { resourceId: string };
   "tag.list": Record<string, never>;
   "tag.rename": { tag: string; name: string };
   "tag.delete": { tag: string };

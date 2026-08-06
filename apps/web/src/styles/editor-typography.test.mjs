@@ -1,0 +1,42 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { MEMO_CONTENT_STYLE } from "@edgeever/shared";
+
+const PRESET_THEME_FILES = [
+  "minimal-emerald.css",
+  "outline-emerald.css",
+  "wechat-green.css",
+  "modern-mint.css",
+];
+
+const readStyle = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), "utf8");
+
+const declarationsForSelector = (source, selectorSuffix) =>
+  [...source.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter(([, selectors]) => selectors.split(",").some((selector) => selector.trim().endsWith(selectorSuffix)))
+    .map(([, , declarations]) => declarations)
+    .join("\n");
+
+describe("editor typography contract", () => {
+  test("keeps the shared body rhythm compact", () => {
+    expect(MEMO_CONTENT_STYLE.body.lineHeight / MEMO_CONTENT_STYLE.body.fontSize).toBe(1.6);
+    expect(MEMO_CONTENT_STYLE.body.paragraphSpacing).toBe(6);
+  });
+
+  test("does not let preset themes override body rhythm", () => {
+    for (const filename of PRESET_THEME_FILES) {
+      const source = readStyle(`./editor-themes/${filename}`);
+      const editorRules = declarationsForSelector(source, ".ProseMirror");
+      const paragraphRules = declarationsForSelector(source, ".ProseMirror p");
+      const listRules = [
+        declarationsForSelector(source, ".ProseMirror ul"),
+        declarationsForSelector(source, ".ProseMirror ol"),
+        declarationsForSelector(source, ".ProseMirror li"),
+      ].join("\n");
+
+      expect(editorRules).not.toMatch(/(?:font-size|line-height)\s*:/);
+      expect(paragraphRules).not.toMatch(/(?:line-height|margin|padding)(?:-[a-z]+)?\s*:/);
+      expect(listRules).not.toMatch(/(?:line-height|margin)(?:-[a-z]+)?\s*:/);
+    }
+  });
+});

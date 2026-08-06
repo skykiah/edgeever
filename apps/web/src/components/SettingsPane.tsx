@@ -9,6 +9,7 @@ import {
   Sparkles,
   User,
   Users,
+  Wrench,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -29,6 +30,7 @@ import { PreferenceCard } from "./settings/PreferenceCard";
 import { PasswordCard } from "./settings/PasswordCard";
 import { SessionCard } from "./settings/SessionCard";
 import { UserManagementCard } from "./settings/UserManagementCard";
+import { ObjectStorageCard } from "./settings/ObjectStorageCard";
 import { ThemeToggle } from "./ThemeToggle";
 import type { AuthUser } from "@edgeever/shared";
 import { contentEnterMotion } from "@/lib/motion";
@@ -58,7 +60,7 @@ const SettingsGroup = ({ children }: { children: ReactNode }) => (
   </div>
 );
 
-type TabKey = "general" | "users" | "data" | "ai" | "account";
+type TabKey = "general" | "users" | "data" | "ai" | "advanced" | "account";
 
 interface TabItem {
   key: TabKey;
@@ -125,6 +127,15 @@ export const SettingsPane = ({
             key: "users" as const,
             label: t("users.title"),
             icon: Users,
+            colorClass: "text-emerald-700",
+            bgColorClass: "bg-emerald-50/80",
+            hoverColorClass: "hover:bg-emerald-50/40",
+            iconColorClass: "text-emerald-600",
+          },
+          {
+            key: "advanced" as const,
+            label: t("settings.tabs.advanced"),
+            icon: Wrench,
             colorClass: "text-emerald-700",
             bgColorClass: "bg-emerald-50/80",
             hoverColorClass: "hover:bg-emerald-50/40",
@@ -211,6 +222,12 @@ export const SettingsPane = ({
             <McpConfigCard />
           </SettingsGroup>
         );
+      case "advanced":
+        return isOwner ? (
+          <SettingsGroup>
+            <ObjectStorageCard demoMode={demoMode} />
+          </SettingsGroup>
+        ) : null;
       case "account":
         return (
           <SettingsGroup>

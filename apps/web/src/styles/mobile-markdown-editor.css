@@ -397,7 +397,7 @@ input {
   padding: 18px 12px 32px;
   color: #020617;
   font-size: 17px;
-  line-height: 1.7;
+  line-height: 1.6;
   -webkit-user-select: text;
   user-select: text;
   caret-color: auto;
@@ -405,7 +405,9 @@ input {
 }
 
 .edgeever-mobile-tiptap-content p {
-  margin: 0 0 0.85em;
+  margin: 0 0 6px;
+  padding: 0;
+  line-height: 1.6;
 }
 
 .edgeever-mobile-tiptap-content h1,
@@ -518,7 +520,8 @@ input {
   align-items: center;
   justify-content: center;
   overflow: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
   padding: 4rem 0.75rem 0.75rem;
   border: 1px solid #d9e2dc;
   border-radius: 8px;
@@ -536,10 +539,10 @@ input {
 
 .edgeever-mobile-tiptap-content .edgeever-mermaid-svg svg {
   display: block;
-  width: 100%;
+  width: auto;
   max-width: 100%;
   height: auto;
-  max-height: none;
+  max-height: 440px;
 }
 
 .edgeever-mobile-tiptap-content .edgeever-mermaid-source {

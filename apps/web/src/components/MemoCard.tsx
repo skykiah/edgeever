@@ -49,8 +49,8 @@ export const MemoCard = ({
   listDensity,
   multiSelectKeyDown,
   onOpen,
-  onDelete,
   onRestore,
+  onDelete,
   onOpenContextMenu,
   onOpenSelectionContextMenu,
   onOpenSelectionKeyboardContextMenu,
@@ -66,8 +66,8 @@ export const MemoCard = ({
   listDensity: MemoListDensity;
   multiSelectKeyDown: boolean;
   onOpen: () => void;
-  onDelete: () => void;
   onRestore: () => void;
+  onDelete: () => void;
   onOpenContextMenu: (event: MouseEvent<HTMLElement>) => void;
   onOpenSelectionContextMenu: (event: MouseEvent<HTMLElement>) => void;
   onOpenSelectionKeyboardContextMenu: (target: HTMLElement) => void;
@@ -420,25 +420,31 @@ export const MemoCard = ({
             >
               <MoreHorizontal className="h-4 w-4" />
             </button>
+            {isTrashView && (
+              <button
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/70 focus-visible:ring-offset-2"
+                type="button"
+                title={t("memoCard.restoreMemo")}
+                aria-label={t("memoCard.restoreMemo")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRestore();
+                }}
+              >
+                <RotateCcw className="h-4 w-4" />
+              </button>
+            )}
             <button
-              className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-400 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/70 focus-visible:ring-offset-2",
-                isTrashView ? "hover:bg-slate-100 hover:text-slate-800" : "hover:bg-rose-50 hover:text-rose-700"
-              )}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-400 transition hover:bg-rose-50 hover:text-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/70 focus-visible:ring-offset-2"
               type="button"
-              title={isTrashView ? t("memoCard.restoreMemo") : t("memoCard.deleteMemo")}
-              aria-label={isTrashView ? t("memoCard.restoreMemo") : t("memoCard.deleteMemo")}
+              title={isTrashView ? t("memoCard.permanentDelete") : t("memoCard.deleteMemo")}
+              aria-label={isTrashView ? t("memoCard.permanentDelete") : t("memoCard.deleteMemo")}
               onClick={(event) => {
                 event.stopPropagation();
-                if (isTrashView) {
-                  onRestore();
-                  return;
-                }
-
                 onDelete();
               }}
             >
-              {isTrashView ? <RotateCcw className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
+              <Trash2 className="h-4 w-4" />
             </button>
           </div>
         )}

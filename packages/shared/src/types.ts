@@ -103,6 +103,19 @@ export type ResourceStorageSummary = {
   attachmentCount: number;
 };
 
+export type ObjectStorageSettings = {
+  provider: "builtin" | "s3";
+  displayName: string;
+  endpoint: string | null;
+  region: string | null;
+  bucket: string | null;
+  accessKeyId: string | null;
+  hasSecretAccessKey: boolean;
+  forcePathStyle: boolean;
+  objectPrefix: string;
+  encryptionConfigured: boolean;
+};
+
 export type ApiToken = {
   id: string;
   name: string;

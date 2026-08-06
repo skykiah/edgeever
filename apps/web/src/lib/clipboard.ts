@@ -1,4 +1,12 @@
 export const copyTextToClipboard = async (text: string) => {
+  if (typeof window !== "undefined" && window.edgeeverDesktop?.isAvailable) {
+    try {
+      return await window.edgeeverDesktop.copyText(text);
+    } catch {
+      return false;
+    }
+  }
+
   if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);

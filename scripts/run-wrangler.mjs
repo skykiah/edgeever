@@ -260,6 +260,7 @@ if (localDemoSeed && !["true", "false"].includes(localDemoSeed)) {
 }
 
 if (demoMode === "true") {
+  // Default: daily 19:00 UTC = 03:00 China Standard Time (UTC+8).
   const demoResetCron = envValue("DEMO_RESET_CRON") || "0 19 * * *";
   changed = true;
   config = `${config.trimEnd()}

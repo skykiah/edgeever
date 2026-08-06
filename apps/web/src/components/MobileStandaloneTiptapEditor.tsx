@@ -18,7 +18,7 @@ import {
 import { EDITOR_LOCAL_SAVE_DELAY_MS, getEditableMemoTitle, getNotebookMoveOptions } from "@/lib/app-helpers";
 import { defaultLocale, normalizeLocale } from "@/i18n/locales";
 import { compressImageForUpload } from "@/lib/image-compression";
-import { localDb, type LocalDraft } from "@/lib/local-db";
+import { localDb, type LocalDraft, type MemoUpdateSyncPayload } from "@/lib/local-db";
 import {
   getStandaloneMobileEditorReturnPath,
   markStandaloneMobileEditorReturning,
@@ -715,6 +715,13 @@ export const MobileStandaloneTiptapEditor = ({
           queuedUpdate = undefined;
         }
         const useDraft = Boolean(draft && (queuedUpdate || Date.parse(draft.updatedAt || "") >= Date.parse(data.memo.updatedAt || "")));
+        const queuedPayload =
+          queuedUpdate && queuedUpdate.kind === "memo.update"
+            ? (queuedUpdate.payload as MemoUpdateSyncPayload)
+            : null;
+        const useQueuedPayload = Boolean(
+          queuedPayload && !useDraft && queuedUpdate && !isMemoUpdateAlreadyApplied(data.memo, queuedUpdate),
+        );
 
         setMemo(data.memo);
 
@@ -728,6 +735,23 @@ export const MobileStandaloneTiptapEditor = ({
           dirtyRef.current = true;
           setSaveStateStable("local-draft");
           scheduleMetadataSave();
+          focusEditorAfterLoad();
+        } else if (useQueuedPayload && queuedPayload) {
+          const queuedTitle = getEditableMemoTitle(queuedPayload.title);
+          const queuedTagsText = queuedPayload.tags.join(", ");
+          setTitle(queuedTitle);
+          titleRef.current = queuedTitle;
+          setTagsText(queuedTagsText);
+          tagsTextRef.current = queuedTagsText;
+          contentJsonRef.current = queuedPayload.contentJson || emptyDoc();
+          editor.commands.setContent(contentJsonRef.current, { emitUpdate: false });
+          lastSavedSnapshotRef.current = JSON.stringify({
+            title: queuedTitle,
+            tagsText: queuedTagsText,
+            contentJson: contentJsonRef.current,
+          });
+          dirtyRef.current = false;
+          setSaveStateStable("local-draft");
           focusEditorAfterLoad();
         } else {
           setTitle(nextTitle);

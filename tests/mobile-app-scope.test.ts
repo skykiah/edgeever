@@ -28,6 +28,11 @@ describe("mobile app scope", () => {
     }
   });
 
+  test("does not initialize a hidden WebView during workspace startup", () => {
+    expect(workspaceSource).not.toContain("EditorRuntimePrewarm");
+    expect(workspaceSource).not.toContain("editorRuntimeWarm");
+  });
+
   test("limits account security to the signed-in user", () => {
     for (const removedCapability of ["createUser", "listUsers", "updateUser"]) {
       expect(accountSecuritySource).not.toContain(removedCapability);
@@ -40,5 +45,11 @@ describe("mobile app scope", () => {
     );
     expect(memoDetailSource).toContain('syncStatus === "conflict"');
     expect(memoDetailSource).toContain("onResolveSyncConflict");
+  });
+
+  test("renders note detail body with the shared read-only TipTap viewer", () => {
+    expect(memoDetailSource).toContain('mode="viewer"');
+    expect(memoDetailSource).toContain("LocalTiptapEditor");
+    expect(memoDetailSource).not.toContain("react-native-markdown-display");
   });
 });

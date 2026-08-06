@@ -399,6 +399,17 @@ export const createEdgeEverClient = (options: EdgeEverClientOptions = {}) => {
 
     listResources: () => request<ListResourcesResponse>("/api/v1/resources"),
 
+    renameResource: (resourceId: string, filename: string) =>
+      request<ResourceResponse>(`/api/v1/resources/${encodeURIComponent(resourceId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ filename }),
+      }),
+
+    deleteResource: (resourceId: string) =>
+      request<{ ok: true }>(`/api/v1/resources/${encodeURIComponent(resourceId)}`, {
+        method: "DELETE",
+      }),
+
     getMarkdownExportPage: (offset = 0, limit = 50) =>
       request<MarkdownExportPage>(`/api/v1/exports/markdown?offset=${offset}&limit=${limit}`),
 

@@ -1,32 +1,44 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Constants from "expo-constants";
-import { AppState, Platform, type AppStateStatus } from "react-native";
+import { AppState, Linking, Platform, type AppStateStatus } from "react-native";
 import * as Updates from "expo-updates";
 import { Alert } from "../components/LocalizedText";
 import { useMobileLocale } from "./mobile-locale";
-import { findNewerMobileRelease } from "./mobile-release";
+import {
+  ANDROID_INSTALL_UPDATE_SOURCES,
+  findNewerMobileRelease,
+  getDefaultMobileInstallUpdateUrl,
+} from "./mobile-release";
 
 const FOREGROUND_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 type MobileUpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready";
+export type MobileUpdateKind = "install" | "ota";
 
 type MobileUpdateContextValue = {
   checkForUpdate: () => Promise<void>;
   hasUpdate: boolean;
+  installedVersion: string | null;
   isSupported: boolean;
+  openUpdate: () => Promise<void>;
   status: MobileUpdateStatus;
+  updateKind: MobileUpdateKind | null;
 };
 
 const MobileUpdateContext = createContext<MobileUpdateContextValue>({
   checkForUpdate: async () => undefined,
   hasUpdate: false,
+  installedVersion: null,
   isSupported: false,
+  openUpdate: async () => undefined,
   status: "idle",
+  updateKind: null,
 });
 
 export const MobileUpdateProvider = ({ children }: { children: ReactNode }) => {
   const { resolvedLocale } = useMobileLocale();
   const [status, setStatus] = useState<MobileUpdateStatus>("idle");
+  const [updateKind, setUpdateKind] = useState<MobileUpdateKind | null>(null);
   const activeCheckRef = useRef<Promise<void> | null>(null);
   const lastAutomaticCheckRef = useRef(0);
   const isSupported = !__DEV__ && Updates.isEnabled;
@@ -61,6 +73,7 @@ export const MobileUpdateProvider = ({ children }: { children: ReactNode }) => {
             }
             const release = await findNewerMobileRelease(installedVersion);
             if (release) {
+              setUpdateKind("install");
               setStatus("available");
               return;
             }
@@ -72,12 +85,15 @@ export const MobileUpdateProvider = ({ children }: { children: ReactNode }) => {
         const result = await Updates.checkForUpdateAsync();
 
         if (!result.isAvailable) {
+          setUpdateKind(null);
           setStatus("idle");
           return;
         }
 
+        setUpdateKind("ota");
         setStatus("available");
       } catch {
+        setUpdateKind(null);
         setStatus("idle");
       }
     })();
@@ -110,16 +126,99 @@ export const MobileUpdateProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [runCheck]);
 
+  const openUpdate = useCallback(async () => {
+    if (updateKind === "install") {
+      if (Platform.OS === "android") {
+        Alert.alert(
+          english ? "Update available" : "发现新版本",
+          english
+            ? "Get the latest version from Google Play or GitHub Releases."
+            : "可从 Google Play 或 GitHub Releases 获取最新版本。",
+          [
+            ...ANDROID_INSTALL_UPDATE_SOURCES.map((source) => ({
+              text: english ? source.labelEn : source.labelZh,
+              onPress: () => {
+                void Linking.openURL(source.url);
+              },
+            })),
+            {
+              text: english ? "Cancel" : "取消",
+              style: "cancel" as const,
+            },
+          ]
+        );
+        return;
+      }
+
+      const url = getDefaultMobileInstallUpdateUrl(Platform.OS);
+      await Linking.openURL(url);
+      return;
+    }
+
+    if (updateKind !== "ota" || !isSupported) {
+      return;
+    }
+
+    try {
+      if (status === "ready") {
+        await Updates.reloadAsync();
+        return;
+      }
+
+      setStatus("downloading");
+      const result = await Updates.fetchUpdateAsync();
+      if (!result.isNew) {
+        setUpdateKind(null);
+        setStatus("idle");
+        if (english) {
+          Alert.alert("No update", "No downloadable in-app update was found.");
+        } else {
+          Alert.alert("暂无更新", "没有可下载的应用内更新。");
+        }
+        return;
+      }
+
+      setStatus("ready");
+      Alert.alert(
+        english ? "Update ready" : "更新已就绪",
+        english ? "Restart now to apply the update." : "重启后即可应用更新。",
+        [
+          {
+            text: english ? "Later" : "稍后",
+            style: "cancel",
+          },
+          {
+            text: english ? "Restart" : "立即重启",
+            onPress: () => {
+              void Updates.reloadAsync();
+            },
+          },
+        ]
+      );
+    } catch {
+      setStatus("available");
+      Alert.alert(
+        english ? "Update failed" : "更新失败",
+        english
+          ? "Could not download the in-app update. Try again later."
+          : "无法下载应用内更新，请稍后再试。"
+      );
+    }
+  }, [english, isSupported, status, updateKind]);
+
   const value = useMemo<MobileUpdateContextValue>(
     () => ({
       checkForUpdate: () => {
         return runCheck(true);
       },
-      hasUpdate: status === "available" || status === "ready",
+      hasUpdate: status === "available" || status === "ready" || status === "downloading",
+      installedVersion,
       isSupported,
+      openUpdate,
       status,
+      updateKind,
     }),
-    [isSupported, runCheck, status]
+    [installedVersion, isSupported, openUpdate, runCheck, status, updateKind]
   );
 
   return <MobileUpdateContext.Provider value={value}>{children}</MobileUpdateContext.Provider>;

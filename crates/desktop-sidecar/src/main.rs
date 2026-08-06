@@ -559,6 +559,14 @@ fn cache_resource(database: &Connection, params: &Value) -> Result<Value, String
     Ok(json!({ "ok": true }))
 }
 
+fn delete_cached_resource(database: &Connection, params: &Value) -> Result<Value, String> {
+    let resource_id = string_param(params, "resourceId")?;
+    database
+        .execute("DELETE FROM resources WHERE id = ?1", [&resource_id])
+        .map_err(|e| e.to_string())?;
+    Ok(json!({ "ok": true }))
+}
+
 fn list_tags(database: &Connection) -> Result<Value, String> {
     let mut statement = database.prepare(
         "SELECT trim(j.value) AS name, COUNT(DISTINCT m.id) AS memo_count, MAX(m.updated_at) AS updated_at
@@ -1515,6 +1523,7 @@ fn handle(
         "template.delete" => delete_template(database, &request.params),
         "resource.list" => list_resources(database, &request.params),
         "resource.cache" => cache_resource(database, &request.params),
+        "resource.delete" => delete_cached_resource(database, &request.params),
         "tag.list" => list_tags(database),
         "tag.rename" => rewrite_tag(database, &request.params, false),
         "tag.delete" => rewrite_tag(database, &request.params, true),

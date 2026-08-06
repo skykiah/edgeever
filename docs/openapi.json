@@ -322,6 +322,35 @@
         }
       }
     },
+    "/api/v1/instance/object-storage": {
+      "get": {
+        "summary": "Read instance object storage settings (owner only)",
+        "responses": {
+          "200": { "description": "Active and saved external object storage settings", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ObjectStorageSettingsResponse" } } } },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "summary": "Test and update instance object storage settings (owner only)",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ObjectStorageSettingsUpdateInput" } } } },
+        "responses": {
+          "200": { "description": "Updated object storage settings", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ObjectStorageSettingsResponse" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/instance/object-storage/test": {
+      "post": {
+        "summary": "Test S3-compatible object storage with an upload/read/delete probe (owner only)",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ObjectStorageConnectionTestInput" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/v1/notebooks": {
       "get": {
         "summary": "List notebooks",
@@ -1263,6 +1292,53 @@
         }
       }
     },
+    "/api/v1/resources/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "patch": {
+        "summary": "Rename a resource",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "filename": { "type": "string", "minLength": 1, "maxLength": 160 } },
+                "required": ["filename"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Renamed resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "resource": { "$ref": "#/components/schemas/Resource" } },
+                  "required": ["resource"]
+                }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "summary": "Delete a resource",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/v1/resources/{id}/blob": {
       "parameters": [
         {
@@ -1611,6 +1687,55 @@
           "isDisabled": { "type": "boolean" }
         },
         "minProperties": 1
+      },
+      "ObjectStorageSettings": {
+        "type": "object",
+        "properties": {
+          "provider": { "type": "string", "enum": ["builtin", "s3"] },
+          "displayName": { "type": "string" },
+          "endpoint": { "type": ["string", "null"] },
+          "region": { "type": ["string", "null"] },
+          "bucket": { "type": ["string", "null"] },
+          "accessKeyId": { "type": ["string", "null"] },
+          "hasSecretAccessKey": { "type": "boolean" },
+          "forcePathStyle": { "type": "boolean" },
+          "objectPrefix": { "type": "string" },
+          "encryptionConfigured": { "type": "boolean" }
+        },
+        "required": ["provider", "displayName", "endpoint", "region", "bucket", "accessKeyId", "hasSecretAccessKey", "forcePathStyle", "objectPrefix", "encryptionConfigured"]
+      },
+      "ObjectStorageSettingsResponse": {
+        "type": "object",
+        "properties": {
+          "settings": { "$ref": "#/components/schemas/ObjectStorageSettings" },
+          "externalSettings": { "oneOf": [{ "$ref": "#/components/schemas/ObjectStorageSettings" }, { "type": "null" }] }
+        },
+        "required": ["settings"]
+      },
+      "ObjectStorageS3Input": {
+        "type": "object",
+        "properties": {
+          "endpoint": { "type": "string", "format": "uri", "maxLength": 500 },
+          "region": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "bucket": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "accessKeyId": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "secretAccessKey": { "type": "string", "minLength": 1, "maxLength": 1024 },
+          "forcePathStyle": { "type": "boolean", "default": true },
+          "objectPrefix": { "type": "string", "maxLength": 500, "default": "" }
+        },
+        "required": ["endpoint", "region", "bucket", "accessKeyId"]
+      },
+      "ObjectStorageConnectionTestInput": {
+        "$ref": "#/components/schemas/ObjectStorageS3Input"
+      },
+      "ObjectStorageSettingsUpdateInput": {
+        "oneOf": [
+          { "type": "object", "properties": { "provider": { "const": "builtin" } }, "required": ["provider"] },
+          { "allOf": [
+            { "$ref": "#/components/schemas/ObjectStorageS3Input" },
+            { "type": "object", "properties": { "provider": { "const": "s3" }, "displayName": { "type": "string", "minLength": 1, "maxLength": 80 } }, "required": ["provider", "displayName"] }
+          ] }
+        ]
       },
       "LoginInput": {
         "type": "object",

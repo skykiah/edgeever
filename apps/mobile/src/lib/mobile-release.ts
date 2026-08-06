@@ -5,6 +5,34 @@ const LATEST_RELEASE_API_URL = "https://api.github.com/repos/tianma-if/edgeever/
 export const GITHUB_LATEST_RELEASE_URL = "https://github.com/tianma-if/edgeever/releases/latest";
 export const GOOGLE_PLAY_URL = "https://play.google.com/store/apps/details?id=org.edgeever.mobile";
 
+export type MobileInstallUpdateSource = {
+  id: "play" | "github";
+  labelEn: string;
+  labelZh: string;
+  url: string;
+};
+
+/** Android installable builds ship via Play and GitHub; both are offered when opening an update. */
+export const ANDROID_INSTALL_UPDATE_SOURCES: readonly MobileInstallUpdateSource[] = [
+  {
+    id: "play",
+    labelEn: "Google Play",
+    labelZh: "Google Play",
+    url: GOOGLE_PLAY_URL,
+  },
+  {
+    id: "github",
+    labelEn: "GitHub Releases",
+    labelZh: "GitHub Releases",
+    url: GITHUB_LATEST_RELEASE_URL,
+  },
+];
+
+export const getDefaultMobileInstallUpdateUrl = (platform: "android" | "ios" | "web" | "windows" | "macos") => {
+  if (platform === "android") return GOOGLE_PLAY_URL;
+  return GITHUB_LATEST_RELEASE_URL;
+};
+
 type LatestReleaseResponse = {
   assets?: unknown;
   tag_name?: unknown;

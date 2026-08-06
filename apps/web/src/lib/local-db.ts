@@ -54,6 +54,8 @@ export type SyncQueueItem = {
   payload: MemoUpdateSyncPayload | MemoCreateSyncPayload | MemoDeleteSyncPayload | MemoRestoreSyncPayload | LocalActionPayload;
   attemptCount: number;
   lastError: string | null;
+  lastErrorCode?: string | null;
+  lastErrorDetails?: Record<string, unknown> | null;
   nextAttemptAt: string | null;
   claimId: string | null;
   createdAt: string;

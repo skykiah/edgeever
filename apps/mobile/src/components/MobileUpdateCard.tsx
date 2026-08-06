@@ -10,17 +10,20 @@ import { useMobileTheme, resolveMobileThemeStyles } from "../lib/mobile-theme";
 export const MobileUpdateCard = () => {
   const { resolvedLocale } = useMobileLocale();
   const { resolvedTheme } = useMobileTheme();
-  const { checkForUpdate, isSupported, status } = useMobileUpdate();
+  const { checkForUpdate, hasUpdate, isSupported, openUpdate, status, updateKind } = useMobileUpdate();
   const english = resolvedLocale === "en-US";
   const busy = status === "checking" || status === "downloading";
   const styles = resolveMobileThemeStyles(baseStyles, resolvedTheme);
-  const statusLabel = status === "checking"
+  const checkLabel = status === "checking"
     ? (english ? "Checking…" : "正在检查…")
-    : status === "downloading"
-      ? (english ? "Downloading…" : "正在下载…")
-      : status === "ready"
-        ? (english ? "Downloaded; restart to apply" : "已下载，重启后应用")
-        : (english ? "Check for updates" : "检查更新");
+    : (english ? "Check for updates" : "检查更新");
+  const openLabel = status === "downloading"
+    ? (english ? "Downloading…" : "正在下载…")
+    : status === "ready"
+      ? (english ? "Restart to apply" : "重启以应用")
+      : updateKind === "ota"
+        ? (english ? "Download update" : "下载更新")
+        : (english ? "Get update" : "前往更新");
 
   return (
     <View style={styles.card}>
@@ -35,6 +38,18 @@ export const MobileUpdateCard = () => {
           {english ? "Current version" : "当前版本"}: v{Updates.runtimeVersion ?? Constants.expoConfig?.version ?? "unknown"}
         </Text>
       </View>
+      {hasUpdate ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ busy: status === "downloading", disabled: status === "downloading" }}
+          disabled={status === "downloading"}
+          onPress={() => void openUpdate()}
+          style={[styles.button, status === "downloading" && styles.buttonDisabled]}
+        >
+          {status === "downloading" ? <ActivityIndicator color="#047857" size="small" /> : <RefreshCw color="#047857" size={16} />}
+          <Text style={styles.buttonText}>{openLabel}</Text>
+        </Pressable>
+      ) : null}
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ busy, disabled: busy }}
@@ -42,8 +57,8 @@ export const MobileUpdateCard = () => {
         onPress={() => void checkForUpdate()}
         style={[styles.button, busy && styles.buttonDisabled]}
       >
-        {busy ? <ActivityIndicator color="#047857" size="small" /> : <RefreshCw color="#047857" size={16} />}
-        <Text style={styles.buttonText}>{statusLabel}</Text>
+        {status === "checking" ? <ActivityIndicator color="#047857" size="small" /> : <RefreshCw color="#047857" size={16} />}
+        <Text style={styles.buttonText}>{checkLabel}</Text>
       </Pressable>
       {!isSupported ? (
         <Text style={styles.hint}>

@@ -23,6 +23,7 @@ import {
   type MemoUpdateSyncPayload,
   type SyncQueueItem,
 } from "@/lib/local-db";
+import { getMemoSaveConflictInfo, parseMemoSaveConflictDetails } from "@/lib/memo-save-conflict";
 import { getCachedLocalResourceBytes, removeCachedLocalResourceBytes } from "@/lib/local-resource-cache";
 import { isBrowserOffline } from "@/lib/network-status";
 
@@ -50,6 +51,8 @@ export const queueLocalAction = async (scope: string, kind: LocalActionKind, ent
     payload,
     attemptCount: 0,
     lastError: null,
+    lastErrorCode: null,
+    lastErrorDetails: null,
     nextAttemptAt: null,
     claimId: null,
     createdAt: now,
@@ -72,6 +75,8 @@ export const queueMemoUpdate = async (payload: MemoUpdateSyncPayload, scope?: st
       payload,
       attemptCount: existing?.attemptCount ?? 0,
       lastError: null,
+      lastErrorCode: null,
+      lastErrorDetails: null,
       nextAttemptAt: null,
       claimId: null,
       createdAt: existing?.createdAt ?? now,
@@ -202,6 +207,37 @@ export const discardWebConflicts = async (scope: string) => {
   return discarded;
 };
 
+/**
+ * Discard a single note's local conflict/draft and replace the local mirror
+ * with the authoritative cloud memo so the editor can rehydrate cleanly.
+ */
+export const discardWebMemoConflict = async (scope: string, memoId: string) => {
+  const remote = await api.getMemo(memoId, { includeDeleted: true });
+  const { putLocalMemo } = await import("@/lib/local-mirror");
+  await putLocalMemo(scope, remote.memo);
+  await localDb.drafts.delete(memoId);
+
+  const queueId = getMemoUpdateQueueId(memoId);
+  const queued = await localDb.syncQueue.get(queueId);
+  if (queued) {
+    await localDb.syncQueue.delete(queueId);
+  }
+
+  // Older clients could leave unscoped conflict rows; clear any leftover
+  // conflict update for this memo under the current scope as well.
+  for (const item of await localDb.syncQueue.where("status").equals("conflict").toArray()) {
+    if (item.memoId !== memoId) continue;
+    if (item.scope && item.scope !== scope) continue;
+    if (item.id === queueId) continue;
+    await localDb.syncQueue.delete(item.id);
+  }
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("edgeever:sync-queue-changed"));
+  }
+  return remote.memo;
+};
+
 export const isMemoUpdateAlreadyApplied = (memo: MemoDetail, item: SyncQueueItem) => {
   if (item.kind !== "memo.update") {
     return false;
@@ -294,13 +330,19 @@ const runQueuedChanges = async (options: {
         result.synced += 1;
       }
     } catch (error) {
-      const status = isRevisionConflict(error) ? "conflict" : "error";
+      const conflictInfo = getMemoSaveConflictInfo(error);
+      const status = conflictInfo ? "conflict" : "error";
       const attemptCount = item.attemptCount + 1;
+      const errorDetails = parseMemoSaveConflictDetails(
+        error instanceof ApiRequestError ? error.details : null,
+      );
 
       const updated = await updateClaimedQueueItem(item, {
         status,
         attemptCount,
         lastError: getErrorMessage(error),
+        lastErrorCode: error instanceof ApiRequestError ? error.code ?? null : null,
+        lastErrorDetails: errorDetails ? { ...errorDetails } : null,
         nextAttemptAt: status === "error" ? getSyncRetryAt(attemptCount) : null,
         claimId: null,
         updatedAt: new Date().toISOString(),
@@ -567,7 +609,13 @@ const syncQueueItem = async (item: SyncQueueItem): Promise<SyncQueueResult> => {
     editSession.baseRevision !== payload.expectedRevision ||
     editSession.baseContentHash !== payload.expectedContentHash
   ) {
-    throw new ApiRequestError("Note changed before the offline draft could sync.", 409, "revision_conflict");
+    throw new ApiRequestError("Note changed before the offline draft could sync.", 409, "revision_conflict", {
+      expectedRevision: payload.expectedRevision,
+      currentRevision: editSession.baseRevision,
+      expectedContentHash: payload.expectedContentHash,
+      currentContentHash: editSession.baseContentHash,
+      source: "offline_sync",
+    });
   }
 
   const data = await api.updateMemo(item.memoId, {
@@ -582,9 +630,6 @@ const syncQueueItem = async (item: SyncQueueItem): Promise<SyncQueueResult> => {
 
   return data.memo;
 };
-
-const isRevisionConflict = (error: unknown) =>
-  error instanceof ApiRequestError && error.code === "revision_conflict";
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) {

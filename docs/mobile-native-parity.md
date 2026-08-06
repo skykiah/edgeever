@@ -19,11 +19,12 @@ Build success is not a performance result. Before a Play production rollout, rec
 
 ## Architecture rules
 
-- Render startup, navigation, notebook selection, memo lists, search, settings, and the Markdown editor with native React Native views.
+- Render startup, navigation, notebook selection, memo lists, search, and settings with native React Native views.
 - Reuse the shared API client and shared data types instead of duplicating backend contracts.
 - Hydrate only the default notebook and memo-list queries at startup. Refresh stale data in the background.
 - Clear persisted query data when the account changes, signs out, or becomes unauthorized.
-- Keep optional heavyweight features out of the startup path. A WebView may only be used for an explicitly selected compatibility editor, never as the App workspace.
+- Keep optional heavyweight features out of the startup path. Do not embed the PWA or a WebView as the App workspace shell (lists, navigation, settings).
+- Note body rendering may use a TipTap WebView runtime for both **read-only preview** and **edit**, so the same document schema, images, tables, and Mermaid path are shared. Native chrome owns headers, FABs, sheets, and system actions around that body.
 - Use virtualized lists and stable item components for collections.
 
 ## Mobile product scope
@@ -37,6 +38,7 @@ The App follows the mobile PWA for high-frequency layouts and interactions, but 
 | Memo list, filters, sort, pin, and batch operations | Implemented |
 | Local-cache search | Implemented |
 | Local TipTap create/edit and autosave flow | Implemented |
+| Note detail body preview via read-only TipTap (same schema as edit) | Implemented |
 | Attachments, image compression, and resource library | Implemented |
 | Tag management | Implemented |
 | Revision history and restore | Implemented |
